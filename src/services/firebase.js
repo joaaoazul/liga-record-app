@@ -23,15 +23,7 @@ import {
 } from 'firebase/firestore';
 
 // Substitui com as tuas configurações do Firebase Console
-const firebaseConfig = {
-  apiKey: "AIzaSyAb2DnWUs99cLf0itZ8s66_Imgpnz9n6LI",
-  authDomain: "liga-record-14679.firebaseapp.com",
-  projectId: "liga-record-14679",
-  storageBucket: "liga-record-14679.firebasestorage.app",
-  messagingSenderId: "259137986986",
-  appId: "1:259137986986:web:0d8ded54b95c66c8ca0bd3",
-  measurementId: "G-L46KCT79V3"
-};
+
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
