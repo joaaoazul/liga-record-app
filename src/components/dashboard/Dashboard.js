@@ -29,17 +29,25 @@ const Dashboard = () => {
       setLoading(true);
       setError(null);
       
+      console.log('🔄 Loading data...');
+      
       const [playersData, settingsData, transactionsData] = await Promise.all([
         firestoreService.getPlayers(),
         firestoreService.getSettings(),
         firestoreService.getTransactions()
       ]);
 
+      console.log('📊 Data loaded:', {
+        players: playersData.length,
+        transactions: transactionsData.length,
+        settings: settingsData
+      });
+
       setPlayers(playersData);
       setSettings(settingsData);
       setTransactions(transactionsData);
     } catch (error) {
-      console.error('Error loading data:', error);
+      console.error('❌ Error loading data:', error);
       setError('Erro ao carregar dados. Verifica a tua conexão.');
     } finally {
       setLoading(false);
@@ -48,22 +56,32 @@ const Dashboard = () => {
 
   const addPlayer = async (playerName) => {
     try {
+      console.log('➕ Adding player:', playerName);
+      
       const newPlayer = {
         id: Date.now(),
         name: playerName,
         balance: -settings.entryFee,
         paid: false,
+        totalPoints: 0,
+        totalRounds: 0,
+        rounds: [],
         createdAt: new Date().toISOString(),
         createdBy: user?.uid
       };
 
+      console.log('💾 Saving player to Firebase:', newPlayer);
+      
       // Save player to database
       const saveResult = await firestoreService.savePlayer(newPlayer);
+      console.log('💾 Save result:', saveResult);
+      
       if (!saveResult.success) {
-        throw new Error(saveResult.error);
+        throw new Error(saveResult.error || 'Failed to save player');
       }
 
       // Add entry fee transaction
+      console.log('💸 Adding entry fee transaction...');
       await firestoreService.addTransaction({
         playerId: newPlayer.id,
         playerName: newPlayer.name,
@@ -73,42 +91,51 @@ const Dashboard = () => {
         balanceAfter: -settings.entryFee
       });
 
-      // Update local state
-      setPlayers([...players, newPlayer]);
-      await loadData(); // Refresh to get latest transactions
+      // CRITICAL FIX: Only reload data, don't mix local state updates
+      console.log('🔄 Reloading data to reflect changes...');
+      await loadData();
+      
+      console.log('✅ Player added successfully!');
+      
     } catch (error) {
-      console.error('Error adding player:', error);
+      console.error('❌ Error adding player:', error);
       setError('Erro ao adicionar jogador: ' + error.message);
     }
   };
 
   const updatePlayer = async (updatedPlayer) => {
     try {
+      console.log('🔄 Updating player:', updatedPlayer);
+      
       const saveResult = await firestoreService.savePlayer(updatedPlayer);
       if (!saveResult.success) {
-        throw new Error(saveResult.error);
+        throw new Error(saveResult.error || 'Failed to update player');
       }
 
-      const updatedPlayers = players.map(player => 
-        player.id === updatedPlayer.id ? updatedPlayer : player
-      );
-      setPlayers(updatedPlayers);
-      await loadData(); // Refresh transactions
+      // Reload all data to ensure consistency
+      await loadData();
+      
+      console.log('✅ Player updated successfully!');
     } catch (error) {
-      console.error('Error updating player:', error);
+      console.error('❌ Error updating player:', error);
       setError('Erro ao atualizar jogador: ' + error.message);
     }
   };
 
   const removePlayer = async (playerId) => {
     try {
+      console.log('🗑️ Removing player:', playerId);
+      
       const player = players.find(p => p.id === playerId);
-      if (!player) return;
+      if (!player) {
+        console.warn('Player not found:', playerId);
+        return;
+      }
 
       // Delete from database
       const deleteResult = await firestoreService.deletePlayer(playerId);
       if (!deleteResult.success) {
-        throw new Error(deleteResult.error);
+        throw new Error(deleteResult.error || 'Failed to delete player');
       }
 
       // Add removal transaction
@@ -121,26 +148,31 @@ const Dashboard = () => {
         balanceAfter: 0
       });
 
-      // Update local state
-      const updatedPlayers = players.filter(player => player.id !== playerId);
-      setPlayers(updatedPlayers);
+      // Reload all data
       await loadData();
+      
+      console.log('✅ Player removed successfully!');
     } catch (error) {
-      console.error('Error removing player:', error);
+      console.error('❌ Error removing player:', error);
       setError('Erro ao remover jogador: ' + error.message);
     }
   };
 
   const togglePaidStatus = async (playerId) => {
     try {
+      console.log('💰 Toggling paid status for player:', playerId);
+      
       const player = players.find(p => p.id === playerId);
-      if (!player) return;
+      if (!player) {
+        console.warn('Player not found:', playerId);
+        return;
+      }
 
       const updatedPlayer = { ...player, paid: !player.paid };
       
       const saveResult = await firestoreService.savePlayer(updatedPlayer);
       if (!saveResult.success) {
-        throw new Error(saveResult.error);
+        throw new Error(saveResult.error || 'Failed to update player status');
       }
 
       // Add status change transaction
@@ -153,27 +185,29 @@ const Dashboard = () => {
         balanceAfter: player.balance
       });
 
-      const updatedPlayers = players.map(p => 
-        p.id === playerId ? updatedPlayer : p
-      );
-      setPlayers(updatedPlayers);
+      // Reload all data
       await loadData();
+      
+      console.log('✅ Player status updated successfully!');
     } catch (error) {
-      console.error('Error toggling paid status:', error);
+      console.error('❌ Error toggling paid status:', error);
       setError('Erro ao alterar status: ' + error.message);
     }
   };
 
   const handleSettingsChange = async (newSettings) => {
     try {
+      console.log('⚙️ Updating settings:', newSettings);
+      
       const saveResult = await firestoreService.saveSettings(newSettings);
       if (!saveResult.success) {
-        throw new Error(saveResult.error);
+        throw new Error(saveResult.error || 'Failed to save settings');
       }
 
       setSettings(newSettings);
+      console.log('✅ Settings updated successfully!');
     } catch (error) {
-      console.error('Error saving settings:', error);
+      console.error('❌ Error saving settings:', error);
       setError('Erro ao guardar configurações: ' + error.message);
     }
   };
@@ -182,6 +216,12 @@ const Dashboard = () => {
     return players.reduce((total, player) => {
       return total + (player.balance > 0 ? player.balance : 0);
     }, 0);
+  };
+
+  // Force refresh function for debugging
+  const forceRefresh = async () => {
+    console.log('🔄 Force refresh triggered...');
+    await loadData();
   };
 
   if (loading) {
@@ -229,6 +269,14 @@ const Dashboard = () => {
             >
               ⚽ Rondas Semanais
             </button>
+            {/* Debug button - remove in production */}
+            <button
+              onClick={forceRefresh}
+              className="px-4 py-3 text-sm text-blue-600 hover:text-blue-800 ml-auto"
+              title="Force refresh for debugging"
+            >
+              🔄 Refresh
+            </button>
           </div>
         </div>
         
@@ -245,6 +293,22 @@ const Dashboard = () => {
             </div>
           </div>
         )}
+
+        {/* Debug info - remove in production */}
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+          <h3 className="font-semibold text-blue-800 mb-2">🔍 Debug Info</h3>
+          <div className="text-sm text-blue-700">
+            <p>Jogadores carregados: {players.length}</p>
+            <p>Transações carregadas: {transactions.length}</p>
+            <p>Última atualização: {new Date().toLocaleTimeString()}</p>
+            <details className="mt-2">
+              <summary className="cursor-pointer">Ver jogadores</summary>
+              <pre className="text-xs bg-white p-2 rounded mt-1 overflow-x-auto">
+                {JSON.stringify(players.map(p => ({ id: p.id, name: p.name, balance: p.balance })), null, 2)}
+              </pre>
+            </details>
+          </div>
+        </div>
 
         {/* Content based on current view */}
         {currentView === 'dashboard' && (
@@ -264,8 +328,8 @@ const Dashboard = () => {
           <RoundsManager
             players={players}
             onUpdatePlayers={(updatedPlayers) => {
-              setPlayers(updatedPlayers);
-              // Refresh all data to ensure consistency
+              console.log('🔄 RoundsManager updating players, reloading data...');
+              // Don't set players directly, reload from database
               loadData();
             }}
             settings={settings}
@@ -274,7 +338,6 @@ const Dashboard = () => {
       </div>
     </div>
   );
-                
 };
 
 export default Dashboard;
