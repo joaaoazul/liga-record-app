@@ -8,7 +8,7 @@ const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return <Loading />;
+    return <Loading message="A verificar autenticação..." />;
   }
 
   if (!user) {

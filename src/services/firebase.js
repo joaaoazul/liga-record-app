@@ -18,23 +18,30 @@ import {
   query,
   where,
   orderBy,
-  deleteDoc 
+  deleteDoc,
+  updateDoc
 } from 'firebase/firestore';
 
 // Substitui com as tuas configurações do Firebase Console
 const firebaseConfig = {
-  apiKey: "AIzaSyC...",
-  authDomain: "liga-record-2025.firebaseapp.com",
-  projectId: "liga-record-2025",
-  storageBucket: "liga-record-2025.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef"
+  apiKey: "AIzaSyAb2DnWUs99cLf0itZ8s66_Imgpnz9n6LI",
+  authDomain: "liga-record-14679.firebaseapp.com",
+  projectId: "liga-record-14679",
+  storageBucket: "liga-record-14679.firebasestorage.app",
+  messagingSenderId: "259137986986",
+  appId: "1:259137986986:web:0d8ded54b95c66c8ca0bd3",
+  measurementId: "G-L46KCT79V3"
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+// Helper para obter userId - só se estiver autenticado
+const getCurrentUserId = () => {
+  return auth.currentUser?.uid || null;
+};
 
 // Auth functions
 export const authService = {
@@ -80,16 +87,35 @@ export const authService = {
   }
 };
 
-// Firestore functions
+// Firestore functions - com isolamento básico por utilizador
 export const firestoreService = {
   // Players
   async getPlayers() {
     try {
-      const querySnapshot = await getDocs(collection(db, 'players'));
-      return querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const userId = getCurrentUserId();
+      
+      if (userId) {
+        // Se está autenticado, buscar só os seus players
+        console.log('🔍 Getting players for user:', userId);
+        const q = query(
+          collection(db, 'players'),
+          where('userId', '==', userId),
+          orderBy('createdAt', 'desc')
+        );
+        const querySnapshot = await getDocs(q);
+        return querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+      } else {
+        // Fallback para compatibilidade
+        console.log('🔍 Getting all players (no user)');
+        const querySnapshot = await getDocs(collection(db, 'players'));
+        return querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+      }
     } catch (error) {
       console.error('Error getting players:', error);
       return [];
@@ -98,9 +124,33 @@ export const firestoreService = {
 
   async savePlayer(player) {
     try {
-      const playerRef = doc(db, 'players', player.id.toString());
-      await setDoc(playerRef, player);
-      return { success: true };
+      const userId = getCurrentUserId();
+      console.log('💾 Saving player:', player, 'for user:', userId);
+      
+      // Adicionar userId se está autenticado
+      const playerData = {
+        ...player,
+        ...(userId && { userId }),
+        updatedAt: new Date().toISOString()
+      };
+
+      if (player.id && typeof player.id === 'string' && !player.id.startsWith('temp_')) {
+        // Update existing player
+        const playerRef = doc(db, 'players', player.id);
+        await updateDoc(playerRef, playerData);
+        console.log('✅ Player updated');
+        return { success: true };
+      } else {
+        // Add new player - manter o comportamento original
+        if (!playerData.createdAt) {
+          playerData.createdAt = new Date().toISOString();
+        }
+        
+        const playerRef = doc(db, 'players', player.id.toString());
+        await setDoc(playerRef, playerData);
+        console.log('✅ Player saved with ID:', player.id);
+        return { success: true };
+      }
     } catch (error) {
       console.error('Error saving player:', error);
       return { success: false, error: error.message };
@@ -120,10 +170,28 @@ export const firestoreService = {
   // Settings
   async getSettings() {
     try {
-      const querySnapshot = await getDocs(collection(db, 'settings'));
-      if (!querySnapshot.empty) {
-        return querySnapshot.docs[0].data();
+      const userId = getCurrentUserId();
+      
+      if (userId) {
+        // Buscar configurações do utilizador
+        console.log('🔍 Getting settings for user:', userId);
+        const q = query(
+          collection(db, 'settings'),
+          where('userId', '==', userId)
+        );
+        const querySnapshot = await getDocs(q);
+        
+        if (!querySnapshot.empty) {
+          return querySnapshot.docs[0].data();
+        }
+      } else {
+        // Fallback para configurações globais
+        const querySnapshot = await getDocs(collection(db, 'settings'));
+        if (!querySnapshot.empty) {
+          return querySnapshot.docs[0].data();
+        }
       }
+      
       return { entryFee: 20, ligaName: 'Liga Record' };
     } catch (error) {
       console.error('Error getting settings:', error);
@@ -133,8 +201,35 @@ export const firestoreService = {
 
   async saveSettings(settings) {
     try {
-      const settingsRef = doc(db, 'settings', 'liga');
-      await setDoc(settingsRef, settings);
+      const userId = getCurrentUserId();
+      
+      const settingsData = {
+        ...settings,
+        ...(userId && { userId }),
+        updatedAt: new Date().toISOString()
+      };
+
+      if (userId) {
+        // Salvar configurações do utilizador
+        const q = query(
+          collection(db, 'settings'),
+          where('userId', '==', userId)
+        );
+        const querySnapshot = await getDocs(q);
+        
+        if (!querySnapshot.empty) {
+          const settingsRef = doc(db, 'settings', querySnapshot.docs[0].id);
+          await updateDoc(settingsRef, settingsData);
+        } else {
+          settingsData.createdAt = new Date().toISOString();
+          await addDoc(collection(db, 'settings'), settingsData);
+        }
+      } else {
+        // Fallback para configurações globais
+        const settingsRef = doc(db, 'settings', 'liga');
+        await setDoc(settingsRef, settingsData);
+      }
+      
       return { success: true };
     } catch (error) {
       console.error('Error saving settings:', error);
@@ -145,11 +240,16 @@ export const firestoreService = {
   // Transactions
   async addTransaction(transaction) {
     try {
-      await addDoc(collection(db, 'transactions'), {
+      const userId = getCurrentUserId();
+      
+      const transactionData = {
         ...transaction,
         timestamp: new Date().toISOString(),
-        createdBy: auth.currentUser?.uid
-      });
+        createdAt: new Date().toISOString(),
+        ...(userId && { userId, createdBy: userId })
+      };
+      
+      await addDoc(collection(db, 'transactions'), transactionData);
       return { success: true };
     } catch (error) {
       console.error('Error adding transaction:', error);
@@ -159,10 +259,22 @@ export const firestoreService = {
 
   async getTransactions() {
     try {
-      const q = query(
-        collection(db, 'transactions'), 
-        orderBy('timestamp', 'desc')
-      );
+      const userId = getCurrentUserId();
+      
+      let q;
+      if (userId) {
+        q = query(
+          collection(db, 'transactions'),
+          where('userId', '==', userId),
+          orderBy('timestamp', 'desc')
+        );
+      } else {
+        q = query(
+          collection(db, 'transactions'), 
+          orderBy('timestamp', 'desc')
+        );
+      }
+      
       const querySnapshot = await getDocs(q);
       return querySnapshot.docs.map(doc => ({
         id: doc.id,
@@ -176,11 +288,24 @@ export const firestoreService = {
 
   async getPlayerTransactions(playerId) {
     try {
-      const q = query(
-        collection(db, 'transactions'),
-        where('playerId', '==', playerId),
-        orderBy('timestamp', 'desc')
-      );
+      const userId = getCurrentUserId();
+      
+      let q;
+      if (userId) {
+        q = query(
+          collection(db, 'transactions'),
+          where('userId', '==', userId),
+          where('playerId', '==', playerId),
+          orderBy('timestamp', 'desc')
+        );
+      } else {
+        q = query(
+          collection(db, 'transactions'),
+          where('playerId', '==', playerId),
+          orderBy('timestamp', 'desc')
+        );
+      }
+      
       const querySnapshot = await getDocs(q);
       return querySnapshot.docs.map(doc => ({
         id: doc.id,
@@ -189,6 +314,105 @@ export const firestoreService = {
     } catch (error) {
       console.error('Error getting player transactions:', error);
       return [];
+    }
+  },
+
+  // Rounds functions
+  async getRounds() {
+    try {
+      const userId = getCurrentUserId();
+      
+      let q;
+      if (userId) {
+        q = query(
+          collection(db, 'rounds'),
+          where('userId', '==', userId),
+          orderBy('createdAt', 'desc')
+        );
+      } else {
+        q = query(
+          collection(db, 'rounds'), 
+          orderBy('createdAt', 'desc')
+        );
+      }
+      
+      const querySnapshot = await getDocs(q);
+      return querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+    } catch (error) {
+      console.error('Error getting rounds:', error);
+      return [];
+    }
+  },
+
+  async addRound(round) {
+    try {
+      const userId = getCurrentUserId();
+      
+      const roundData = {
+        ...round,
+        timestamp: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        ...(userId && { userId, createdBy: userId })
+      };
+      
+      await addDoc(collection(db, 'rounds'), roundData);
+      return { success: true };
+    } catch (error) {
+      console.error('Error adding round:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async updateRound(roundId, updates) {
+    try {
+      console.log('🔄 Updating round:', roundId, updates);
+      
+      const roundRef = doc(db, 'rounds', roundId.toString());
+      const updateData = {
+        ...updates,
+        updatedAt: new Date().toISOString()
+      };
+      
+      await updateDoc(roundRef, updateData);
+      console.log('✅ Round updated successfully');
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Error updating round:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async getCurrentRound() {
+    try {
+      const userId = getCurrentUserId();
+      
+      let q;
+      if (userId) {
+        q = query(
+          collection(db, 'rounds'),
+          where('userId', '==', userId),
+          where('status', '==', 'active'),
+          orderBy('createdAt', 'desc')
+        );
+      } else {
+        q = query(
+          collection(db, 'rounds'),
+          where('status', '==', 'active'),
+          orderBy('createdAt', 'desc')
+        );
+      }
+      
+      const querySnapshot = await getDocs(q);
+      return querySnapshot.docs.length > 0 ? {
+        id: querySnapshot.docs[0].id,
+        ...querySnapshot.docs[0].data()
+      } : null;
+    } catch (error) {
+      console.error('Error getting current round:', error);
+      return null;
     }
   }
 };
