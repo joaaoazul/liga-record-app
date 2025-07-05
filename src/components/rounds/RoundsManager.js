@@ -1,39 +1,8 @@
-// src/components/rounds/RoundsManager.js
+// src/components/rounds/RoundsManager.js - VERSÃO COMPLETA CORRIGIDA
 import React, { useState, useEffect } from 'react';
 import { Calendar, Trophy, Users, Euro, Plus, Edit, Eye, Target, TrendingDown, Award, CheckCircle } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { firestoreService } from '../../services/firebase';
-
-const getDefaultPaymentStructure = (playerCount) => {
-    if (!playerCount || playerCount <= 0) return [0];
-    
-    console.log('🏗️ Creating payment structure for', playerCount, 'players');
-    
-    if (playerCount <= 4) {
-      return [0, 0.25, 0.5, 1].slice(0, playerCount);
-    } else if (playerCount <= 6) {
-      return [0, 0.25, 0.5, 1, 1.5, 2].slice(0, playerCount);
-    } else if (playerCount <= 8) {
-      return [0, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5].slice(0, playerCount);
-    } else if (playerCount <= 10) {
-      return [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5].slice(0, playerCount);
-    } else if (playerCount <= 12) {
-      return [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3].slice(0, playerCount);
-    } else {
-      // Para mais de 12 jogadores, criar estrutura dinâmica
-      const structure = [0]; // 1º lugar sempre grátis
-      const increment = 0.25;
-      const maxPayment = 3;
-      
-      for (let i = 1; i < playerCount; i++) {
-        const payment = Math.min(increment * i, maxPayment);
-        structure.push(payment);
-      }
-      
-      console.log('📊 Generated structure for', playerCount, 'players:', structure);
-      return structure.slice(0, playerCount);
-    }
-  };
 
 // Helper para calcular semana do ano
 Date.prototype.getWeek = function() {
@@ -90,12 +59,15 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
         });
         
         if (!closeResult.success) {
-          throw new Error('Failed to close current round');
+          console.warn('⚠️ Failed to close current round, but continuing...');
         }
       }
 
+      // IMPORTANTE: Gerar o ID antes de criar
+      const roundId = `round_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
       const newRound = {
-        id: `round_${Date.now()}`, // Use string ID with prefix
+        id: roundId, // ID específico
         name: roundData.name,
         week: roundData.week,
         month: roundData.month,
@@ -114,7 +86,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
         createdBy: user?.uid || 'anonymous'
       };
 
-      console.log('💾 Saving new round:', newRound);
+      console.log('💾 Saving new round with ID:', roundId);
       const result = await firestoreService.addRound(newRound);
       console.log('💾 Save result:', result);
 
@@ -145,9 +117,6 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
         throw new Error('No current round found');
       }
 
-      // IMMEDIATE UI UPDATE - Hide finish button and show processing
-      setCurrentRound(prev => ({ ...prev, status: 'processing' }));
-      
       // Calculate payments based on positions
       const updatedParticipants = results.map((participant, index) => ({
         ...participant,
@@ -157,7 +126,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
 
       console.log('💰 Calculated participants with payments:', updatedParticipants);
 
-      // CORREÇÃO ROBUSTA: Tentar update, se falhar criar nova
+      // Update round in database
       const actualRoundId = currentRound.id || roundId;
       console.log('📝 Updating round with ID:', actualRoundId);
 
@@ -167,31 +136,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
         completedAt: new Date().toISOString()
       });
 
-      console.log('📝 Round update result:', roundUpdateResult);
-
-      // Se o update falhou porque a ronda não existe
-      if (!roundUpdateResult.success && roundUpdateResult.needsCreation) {
-        console.log('🆕 Creating new completed round...');
-        
-        const completeRoundData = {
-          ...currentRound,
-          id: actualRoundId,
-          status: 'completed',
-          participants: updatedParticipants,
-          completedAt: new Date().toISOString()
-        };
-        
-        const createResult = await firestoreService.createCompletedRound(completeRoundData);
-        
-        if (!createResult.success) {
-          setCurrentRound(prev => ({ ...prev, status: 'active' }));
-          throw new Error('Failed to create completed round: ' + createResult.error);
-        }
-        
-        console.log('✅ Round created as completed');
-      } else if (!roundUpdateResult.success) {
-        // Outro tipo de erro
-        setCurrentRound(prev => ({ ...prev, status: 'active' }));
+      if (!roundUpdateResult.success) {
         throw new Error('Failed to update round status: ' + roundUpdateResult.error);
       }
 
@@ -208,7 +153,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
           // Add round to player's rounds history
           const playerRounds = player.rounds || [];
           const newRoundData = {
-            roundId: roundId,
+            roundId: actualRoundId,
             roundName: currentRound.name,
             points: participant.points,
             position: participant.position,
@@ -234,31 +179,28 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
             updatedPlayers.push(updatedPlayer);
           } else {
             console.error(`Failed to save player ${player.name}:`, saveResult.error);
-            updatedPlayers.push(player); // Keep original if save failed
+            updatedPlayers.push(player);
           }
         } else {
           updatedPlayers.push(player);
         }
       }
 
-      console.log('👥 Final updated players:', updatedPlayers);
-
       // Add transactions for payments
       for (const participant of updatedParticipants) {
         if (participant.weeklyPayment > 0) {
           const playerBalance = updatedPlayers.find(p => p.id === participant.playerId)?.balance || 0;
           try {
-            const transactionResult = await firestoreService.addTransaction({
+            await firestoreService.addTransaction({
               playerId: participant.playerId,
               playerName: participant.playerName,
               type: 'debt',
               amount: participant.weeklyPayment,
               note: `Pagamento semanal - ${participant.position}º lugar na ${currentRound.name}`,
               balanceAfter: playerBalance,
-              roundId: roundId,
+              roundId: actualRoundId,
               date: new Date().toISOString()
             });
-            console.log(`💸 Transaction for ${participant.playerName}:`, transactionResult);
           } catch (transactionError) {
             console.error(`Failed to create transaction for ${participant.playerName}:`, transactionError);
           }
@@ -271,27 +213,19 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
         onUpdatePlayers(updatedPlayers);
       }
       
-      // Force complete reload of rounds to ensure UI consistency
-      console.log('🔄 Reloading rounds...');
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Longer delay to ensure DB consistency
-      await loadRounds();
-      
-      // CRITICAL: CLEAR current round immediately after successful completion
-      console.log('🗑️ Clearing current round from state...');
+      // CRITICAL FIX: Clear current round BEFORE reloading
       setCurrentRound(null);
       setShowFinishRound(null);
+      
+      // Reload rounds to ensure UI consistency
+      console.log('🔄 Reloading rounds...');
+      await loadRounds();
       
       console.log('✅ Round finished successfully!');
       alert('🎉 Ronda finalizada com sucesso!');
       
     } catch (error) {
       console.error('❌ Error finishing round:', error);
-      
-      // REVERT UI STATE on error
-      if (currentRound) {
-        setCurrentRound(prev => ({ ...prev, status: 'active' }));
-      }
-      
       alert('Erro ao finalizar ronda: ' + error.message);
     } finally {
       setLoading(false);
@@ -301,14 +235,31 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
   const getDefaultPaymentStructure = (playerCount) => {
     if (!playerCount || playerCount <= 0) return [0];
     
-    if (playerCount <= 6) {
-      return [0, 0.25, 0.5, 1, 1.5, 2.5].slice(0, playerCount);
+    console.log('🏗️ Creating payment structure for', playerCount, 'players');
+    
+    if (playerCount <= 4) {
+      return [0, 0.25, 0.5, 1].slice(0, playerCount);
+    } else if (playerCount <= 6) {
+      return [0, 0.25, 0.5, 1, 1.5, 2].slice(0, playerCount);
     } else if (playerCount <= 8) {
       return [0, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5].slice(0, playerCount);
     } else if (playerCount <= 10) {
       return [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5].slice(0, playerCount);
-    } else {
+    } else if (playerCount <= 12) {
       return [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3].slice(0, playerCount);
+    } else {
+      // Para mais de 12 jogadores, criar estrutura dinâmica
+      const structure = [0]; // 1º lugar sempre grátis
+      const increment = 0.25;
+      const maxPayment = 3;
+      
+      for (let i = 1; i < playerCount; i++) {
+        const payment = Math.min(increment * i, maxPayment);
+        structure.push(payment);
+      }
+      
+      console.log('📊 Generated structure for', playerCount, 'players:', structure);
+      return structure.slice(0, playerCount);
     }
   };
 
@@ -343,7 +294,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
           </div>
           <button
             onClick={() => setShowCreateRound(true)}
-            disabled={safePlayers.length === 0 || loading}
+            disabled={safePlayers.length === 0 || loading || currentRound?.status === 'active'}
             className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2 disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
             <Plus className="h-4 w-4" />
@@ -364,7 +315,6 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
               <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium">
                 Em Curso
               </span>
-              {/* BOTÃO MAIS SOFT PARA FINALIZAR - COM PROTEÇÃO EXTRA */}
               <button
                 onClick={() => {
                   if (currentRound && currentRound.status === 'active' && !loading) {
@@ -657,7 +607,7 @@ const CreateRoundModal = ({ players, onClose, onSubmit, getDefaultPaymentStructu
   );
 };
 
-// Modal para finalizar ronda - VERSÃO COMPACTA
+// Modal para finalizar ronda
 const FinishRoundModal = ({ round, onClose, onSubmit, loading }) => {
   const [results, setResults] = useState(
     (round.participants || []).map(p => ({ ...p, points: 0 }))
@@ -761,7 +711,7 @@ const FinishRoundModal = ({ round, onClose, onSubmit, loading }) => {
             </div>
           </div>
 
-          {/* Footer com Botões - TAMANHO NORMAL */}
+          {/* Footer com Botões */}
           <div className="flex-shrink-0 bg-white border-t border-gray-200 p-4 rounded-b-2xl">
             <div className="flex space-x-3">
               <button
@@ -788,42 +738,76 @@ const FinishRoundModal = ({ round, onClose, onSubmit, loading }) => {
 
 // Modal para ver resultados
 const RoundResultsModal = ({ round, onClose }) => {
+  if (!round || !round.participants) {
+    return null;
+  }
+
+  const sortedParticipants = round.participants
+    .filter(p => p.position)
+    .sort((a, b) => a.position - b.position);
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg p-6 w-full max-w-lg">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold">📊 {round.name}</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">✕</button>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl">
+        
+        {/* Header */}
+        <div className="flex justify-between items-center p-6 border-b border-gray-200 bg-blue-50 rounded-t-2xl flex-shrink-0">
+          <h3 className="text-xl font-semibold text-blue-800">📊 {round.name}</h3>
+          <button 
+            onClick={onClose} 
+            className="text-gray-500 hover:text-gray-700 text-xl font-bold w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200"
+          >
+            ✕
+          </button>
         </div>
 
-        <div className="space-y-3">
-          {(round.participants || [])
-            .filter(p => p.position)
-            .sort((a, b) => a.position - b.position)
-            .map((participant, index) => (
-            <div key={participant.playerId} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-              <div className="flex items-center space-x-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
-                  index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : index === 2 ? 'bg-orange-500' : 'bg-blue-500'
-                }`}>
-                  {participant.position}
+        {/* Content - Scrollable */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {sortedParticipants.length > 0 ? (
+            <div className="space-y-3">
+              {sortedParticipants.map((participant, index) => (
+                <div key={participant.playerId} className="flex justify-between items-center p-4 bg-gray-50 rounded-lg border">
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-lg ${
+                      index === 0 ? 'bg-yellow-500' : 
+                      index === 1 ? 'bg-gray-400' : 
+                      index === 2 ? 'bg-orange-500' : 
+                      'bg-blue-500'
+                    }`}>
+                      {participant.position}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-lg text-gray-800">{participant.playerName}</span>
+                      <div className="text-sm text-gray-600">{participant.points} pontos</div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className={`text-lg font-bold ${participant.weeklyPayment === 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {participant.weeklyPayment === 0 ? 'Grátis' : `${participant.weeklyPayment.toFixed(2)}€`}
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      {participant.weeklyPayment === 0 ? '🏆 Vencedor!' : '💸 Pagamento'}
+                    </div>
+                  </div>
                 </div>
-                <span className="font-medium">{participant.playerName}</span>
-              </div>
-              <div className="text-right">
-                <div className="font-bold">{participant.points} pts</div>
-                <div className={`text-sm ${participant.weeklyPayment === 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {participant.weeklyPayment === 0 ? 'Grátis' : `${participant.weeklyPayment.toFixed(2)}€`}
-                </div>
-              </div>
+              ))}
             </div>
-          ))}
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-gray-500">Nenhum resultado disponível para esta ronda.</p>
+            </div>
+          )}
         </div>
 
-        <div className="mt-6 flex justify-center">
+        {/* Footer */}
+        <div className="flex-shrink-0 bg-gray-50 p-6 rounded-b-2xl border-t">
+          <div className="flex justify-between items-center text-sm text-gray-600 mb-4">
+            <span>Ronda concluída em:</span>
+            <span>{round.completedAt ? new Date(round.completedAt).toLocaleDateString('pt-PT') : 'N/A'}</span>
+          </div>
           <button
             onClick={onClose}
-            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+            className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors font-medium"
           >
             Fechar
           </button>

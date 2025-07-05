@@ -1,4 +1,4 @@
-// src/components/players/PlayerProfile.js
+// src/components/players/PlayerProfile.js - Versão Completa Corrigida
 import React, { useState } from 'react';
 import { ArrowLeft, User, TrendingUp, TrendingDown, DollarSign, Calendar, Calculator, Trophy } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
@@ -19,67 +19,142 @@ const PlayerProfile = ({ player, onBack, onUpdatePlayer, transactions, totalPot,
     try {
       let newBalance;
       let transactionType;
+      let transactionAmount;
       
       if (type === 'pay_entry') {
+        // Pagar quota de entrada
         newBalance = player.balance + settings.entryFee;
         transactionType = 'payment';
+        transactionAmount = settings.entryFee;
       } else if (type === 'add_penalty') {
+        // Adicionar penalização
         newBalance = player.balance - value;
         transactionType = 'debt';
+        transactionAmount = value;
       } else if (type === 'clear_debt') {
+        // Quitar todas as dívidas
+        transactionAmount = Math.abs(player.balance);
         newBalance = 0;
         transactionType = 'payment';
       }
 
-      const updatedPlayer = {
-        ...player,
-        balance: newBalance
-      };
+      console.log('💰 Quick action:', { type, oldBalance: player.balance, newBalance, transactionAmount });
 
-      await firestoreService.addTransaction({
+      // Criar a transação PRIMEIRO
+      const transactionResult = await firestoreService.addTransaction({
         playerId: player.id,
         playerName: player.name,
         type: transactionType,
-        amount: Math.abs(newBalance - player.balance),
+        amount: transactionAmount,
         note: description,
-        balanceAfter: newBalance
+        balanceAfter: newBalance,
+        timestamp: new Date().toISOString(),
+        createdBy: user?.uid
       });
 
-      onUpdatePlayer(updatedPlayer);
+      console.log('📝 Transaction created:', transactionResult);
+
+      if (!transactionResult.success) {
+        throw new Error('Failed to create transaction');
+      }
+
+      // Atualizar o jogador
+      const updatedPlayer = {
+        ...player,
+        balance: newBalance,
+        paid: newBalance >= 0 // Marcar como pago se saldo >= 0
+      };
+
+      console.log('💾 Updating player:', updatedPlayer);
+
+      const saveResult = await firestoreService.savePlayer(updatedPlayer);
+      
+      if (!saveResult.success) {
+        throw new Error(saveResult.error || 'Failed to update player');
+      }
+
+      console.log('✅ Player updated successfully');
+
+      // Chamar onUpdatePlayer para atualizar o estado no componente pai
+      await onUpdatePlayer(updatedPlayer);
+      
+      // Mostrar notificação de sucesso
+      alert(`✅ ${description} - Novo saldo: ${newBalance.toFixed(2)}€`);
+      
     } catch (error) {
-      console.error('Error in quick action:', error);
+      console.error('❌ Error in quick action:', error);
+      alert('Erro ao executar ação: ' + error.message);
     } finally {
       setLoading(false);
     }
   };
 
   const handleCustomTransaction = async () => {
-    if (!amount || parseFloat(amount) <= 0) return;
+    if (!amount || parseFloat(amount) <= 0) {
+      alert('Por favor insere um valor válido');
+      return;
+    }
 
     setLoading(true);
     try {
       const value = parseFloat(amount);
       const newBalance = operationType === 'add' ? player.balance + value : player.balance - value;
 
-      const updatedPlayer = {
-        ...player,
-        balance: newBalance
-      };
+      console.log('💳 Custom transaction:', { 
+        operationType, 
+        value, 
+        oldBalance: player.balance, 
+        newBalance 
+      });
 
-      await firestoreService.addTransaction({
+      // Criar a transação
+      const transactionResult = await firestoreService.addTransaction({
         playerId: player.id,
         playerName: player.name,
         type: operationType === 'add' ? 'payment' : 'debt',
         amount: value,
         note: note || (operationType === 'add' ? 'Pagamento personalizado' : 'Dívida adicionada'),
-        balanceAfter: newBalance
+        balanceAfter: newBalance,
+        timestamp: new Date().toISOString(),
+        createdBy: user?.uid
       });
 
-      onUpdatePlayer(updatedPlayer);
+      console.log('📝 Transaction created:', transactionResult);
+
+      if (!transactionResult.success) {
+        throw new Error('Failed to create transaction');
+      }
+
+      // Atualizar o jogador
+      const updatedPlayer = {
+        ...player,
+        balance: newBalance,
+        paid: newBalance >= 0
+      };
+
+      console.log('💾 Updating player:', updatedPlayer);
+
+      const saveResult = await firestoreService.savePlayer(updatedPlayer);
+      
+      if (!saveResult.success) {
+        throw new Error(saveResult.error || 'Failed to update player');
+      }
+
+      console.log('✅ Player updated successfully');
+
+      // Chamar onUpdatePlayer para atualizar o estado
+      await onUpdatePlayer(updatedPlayer);
+      
+      // Limpar formulário
       setAmount('');
       setNote('');
+      
+      // Notificar sucesso
+      alert(`✅ Transação concluída - Novo saldo: ${newBalance.toFixed(2)}€`);
+      
     } catch (error) {
-      console.error('Error in custom transaction:', error);
+      console.error('❌ Error in custom transaction:', error);
+      alert('Erro ao processar transação: ' + error.message);
     } finally {
       setLoading(false);
     }

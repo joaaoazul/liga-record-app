@@ -1,6 +1,6 @@
-// src/components/players/PlayerList.js
+// src/components/players/PlayerList.js - VERSÃO CORRIGIDA
 import React, { useState } from 'react';
-import { Users, Plus, Search, Filter } from 'lucide-react';
+import { Users, Plus, Search, Filter, Trash2, BrushCleaning } from 'lucide-react';
 import PlayerCard from './PlayerCard';
 
 const PlayerList = ({ 
@@ -8,18 +8,30 @@ const PlayerList = ({
   onViewProfile, 
   onTogglePaidStatus, 
   onRemovePlayer, 
-  onAddPlayer 
+  onRemoveAllPlayers,
+  onCleanDuplicates,
+  onAddPlayer,
+  isAddingPlayer = false
 }) => {
   const [newPlayerName, setNewPlayerName] = useState('');
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all'); // all, paid, pending, debt
 
-  const handleAddPlayer = () => {
-    if (newPlayerName.trim()) {
-      onAddPlayer(newPlayerName.trim());
+  const handleAddPlayer = async () => {
+    if (newPlayerName.trim() && !isAddingPlayer) {
+      await onAddPlayer(newPlayerName.trim());
       setNewPlayerName('');
       setShowAddPlayer(false);
+    }
+  };
+
+  const handleRemovePlayer = async (playerId) => {
+    console.log('🗑️ PlayerList: Remove player called with ID:', playerId);
+    if (onRemovePlayer) {
+      await onRemovePlayer(playerId);
+    } else {
+      console.error('❌ onRemovePlayer function not provided');
     }
   };
 
@@ -63,13 +75,41 @@ const PlayerList = ({
           <Users className="h-5 w-5 mr-2" />
           👥 Jogadores da Liga ({filteredPlayers.length}/{players.length})
         </h2>
-        <button
-          onClick={() => setShowAddPlayer(true)}
-          className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Adicionar</span>
-        </button>
+        <div className="flex space-x-2">
+          {/* Botão Limpar Duplicados */}
+          {players.length > 0 && onCleanDuplicates && (
+            <button
+              onClick={onCleanDuplicates}
+              className="bg-yellow-600 text-white px-4 py-2 rounded-lg hover:bg-yellow-700 transition-colors flex items-center space-x-2"
+              title="Remover jogadores duplicados"
+            >
+              <BrushCleaning className="h-4 w-4" />
+              <span>Limpar Duplicados</span>
+            </button>
+          )}
+          
+          {/* Botão Eliminar Todos */}
+          {players.length > 0 && onRemoveAllPlayers && (
+            <button
+              onClick={onRemoveAllPlayers}
+              className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors flex items-center space-x-2"
+              title="Eliminar todos os jogadores"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span>Eliminar Todos</span>
+            </button>
+          )}
+          
+          {/* Botão Adicionar */}
+          <button
+            onClick={() => setShowAddPlayer(true)}
+            disabled={isAddingPlayer}
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Plus className="h-4 w-4" />
+            <span>{isAddingPlayer ? 'A adicionar...' : 'Adicionar'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Search and Filter */}
@@ -114,20 +154,22 @@ const PlayerList = ({
               className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
               onKeyPress={(e) => e.key === 'Enter' && handleAddPlayer()}
               autoFocus
+              disabled={isAddingPlayer}
             />
             <button
               onClick={handleAddPlayer}
-              disabled={!newPlayerName.trim()}
+              disabled={!newPlayerName.trim() || isAddingPlayer}
               className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              ✅ Adicionar
+              {isAddingPlayer ? '⏳ A adicionar...' : '✅ Adicionar'}
             </button>
             <button
               onClick={() => {
                 setShowAddPlayer(false);
                 setNewPlayerName('');
               }}
-              className="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors"
+              disabled={isAddingPlayer}
+              className="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors disabled:opacity-50"
             >
               ❌ Cancelar
             </button>
@@ -163,6 +205,15 @@ const PlayerList = ({
         </div>
       )}
 
+      {/* Debug Info */}
+      {players.length > 0 && (
+        <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+          <p className="text-xs text-gray-600">
+            🔍 Debug: {players.length} jogadores carregados | onRemovePlayer: {onRemovePlayer ? '✅' : '❌'} | onRemoveAllPlayers: {onRemoveAllPlayers ? '✅' : '❌'}
+          </p>
+        </div>
+      )}
+
       {/* Players Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredPlayers.map(player => (
@@ -171,7 +222,7 @@ const PlayerList = ({
             player={player}
             onViewProfile={onViewProfile}
             onTogglePaidStatus={onTogglePaidStatus}
-            onRemovePlayer={onRemovePlayer}
+            onRemovePlayer={handleRemovePlayer}
           />
         ))}
       </div>

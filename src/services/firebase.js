@@ -1,4 +1,4 @@
-// src/services/firebase.js - VERSÃO SEM ÍNDICES
+// src/services/firebase.js - VERSÃO CORRIGIDA
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -18,12 +18,13 @@ import {
   query,
   where,
   deleteDoc,
-  updateDoc
+  updateDoc,
+  getDoc  // ADICIONADO
 } from 'firebase/firestore';
 
 // Substitui com as tuas configurações do Firebase Console
 const firebaseConfig = {
-    apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
   authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
   storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
@@ -80,16 +81,15 @@ export const authService = {
   }
 };
 
-// Firestore functions SEM ÍNDICES - só queries básicas
+// Firestore functions
 export const firestoreService = {
   
-  // PLAYERS - Query básica + filtro manual
+  // PLAYERS
   async getPlayers() {
     try {
       const userId = getCurrentUserId();
       console.log('🔍 Getting players for user:', userId);
       
-      // Query básica SEM orderBy para evitar índices
       const snapshot = await getDocs(collection(db, 'players'));
       let players = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -108,7 +108,7 @@ export const firestoreService = {
       players.sort((a, b) => {
         const dateA = new Date(a.createdAt || 0);
         const dateB = new Date(b.createdAt || 0);
-        return dateB - dateA; // Mais recentes primeiro
+        return dateB - dateA;
       });
       
       console.log('✅ Final players list:', players);
@@ -134,27 +134,33 @@ export const firestoreService = {
         playerData.userId = userId;
       }
 
-      // Determinar se é update ou create
-      const isUpdate = player.id && 
-                      typeof player.id === 'string' && 
-                      !player.id.startsWith('temp_') &&
-                      player.id.length > 10;
-
-      if (isUpdate) {
+      // Se tem ID e não é temporário, é update
+      if (player.id && !player.id.startsWith('temp_')) {
         console.log('🔄 Updating existing player');
         const playerRef = doc(db, 'players', player.id);
         await updateDoc(playerRef, playerData);
         console.log('✅ Player updated');
         return { success: true, id: player.id };
       } else {
+        // É criação - se tem ID específico, usar setDoc
         console.log('➕ Creating new player');
         if (!playerData.createdAt) {
           playerData.createdAt = new Date().toISOString();
         }
         
-        const docRef = await addDoc(collection(db, 'players'), playerData);
-        console.log('✅ Player created with ID:', docRef.id);
-        return { success: true, id: docRef.id };
+        if (player.id && player.id.startsWith('player_')) {
+          // Usar o ID específico
+          console.log('💾 Creating player with specific ID:', player.id);
+          const playerRef = doc(db, 'players', player.id);
+          await setDoc(playerRef, playerData);
+          console.log('✅ Player created with ID:', player.id);
+          return { success: true, id: player.id };
+        } else {
+          // Gerar ID automático
+          const docRef = await addDoc(collection(db, 'players'), playerData);
+          console.log('✅ Player created with auto ID:', docRef.id);
+          return { success: true, id: docRef.id };
+        }
       }
     } catch (error) {
       console.error('❌ Error saving player:', error);
@@ -164,17 +170,38 @@ export const firestoreService = {
 
   async deletePlayer(playerId) {
     try {
-      console.log('🗑️ Deleting player:', playerId);
-      await deleteDoc(doc(db, 'players', playerId));
-      console.log('✅ Player deleted');
+      console.log('🗑️ Attempting to delete player with ID:', playerId);
+      
+      if (!playerId) {
+        console.error('❌ No playerId provided');
+        return { success: false, error: 'No player ID provided' };
+      }
+      
+      // Verificar se o documento existe primeiro
+      const playerRef = doc(db, 'players', playerId);
+      const playerDoc = await getDoc(playerRef);
+      
+      if (!playerDoc.exists()) {
+        console.error('❌ Player document does not exist:', playerId);
+        return { success: false, error: 'Player not found in database' };
+      }
+      
+      console.log('📄 Player exists, proceeding with deletion...');
+      await deleteDoc(playerRef);
+      console.log('✅ Player deleted successfully');
+      
       return { success: true };
+      
     } catch (error) {
       console.error('❌ Error deleting player:', error);
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+      
       return { success: false, error: error.message };
     }
   },
 
-  // SETTINGS - Query básica + filtro manual
+  // SETTINGS
   async getSettings() {
     try {
       const userId = getCurrentUserId();
@@ -252,7 +279,7 @@ export const firestoreService = {
     }
   },
 
-  // TRANSACTIONS - Query básica + filtro manual
+  // TRANSACTIONS
   async addTransaction(transaction) {
     try {
       const userId = getCurrentUserId();
@@ -260,13 +287,13 @@ export const firestoreService = {
       
       const transactionData = {
         ...transaction,
-        timestamp: new Date().toISOString(),
+        timestamp: transaction.timestamp || new Date().toISOString(),
         createdAt: new Date().toISOString()
       };
       
       if (userId) {
         transactionData.userId = userId;
-        transactionData.createdBy = userId;
+        transactionData.createdBy = transaction.createdBy || userId;
       }
       
       await addDoc(collection(db, 'transactions'), transactionData);
@@ -283,7 +310,6 @@ export const firestoreService = {
       const userId = getCurrentUserId();
       console.log('💸 Getting transactions for user:', userId);
       
-      // Query básica SEM orderBy
       const snapshot = await getDocs(collection(db, 'transactions'));
       let transactions = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -302,7 +328,7 @@ export const firestoreService = {
       transactions.sort((a, b) => {
         const dateA = new Date(a.timestamp || a.createdAt || 0);
         const dateB = new Date(b.timestamp || b.createdAt || 0);
-        return dateB - dateA; // Mais recentes primeiro
+        return dateB - dateA;
       });
       
       console.log('✅ Final transactions list:', transactions.length);
@@ -313,13 +339,12 @@ export const firestoreService = {
     }
   },
 
-  // ROUNDS - Query básica + filtro manual
+  // ROUNDS - CORRIGIDO
   async getRounds() {
     try {
       const userId = getCurrentUserId();
       console.log('🎯 Getting rounds for user:', userId);
       
-      // Query básica SEM orderBy
       const snapshot = await getDocs(collection(db, 'rounds'));
       let rounds = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -357,16 +382,26 @@ export const firestoreService = {
       const roundData = {
         ...round,
         timestamp: new Date().toISOString(),
-        createdAt: new Date().toISOString()
+        createdAt: round.createdAt || new Date().toISOString()
       };
       
       if (userId) {
         roundData.userId = userId;
-        roundData.createdBy = userId;
+        roundData.createdBy = round.createdBy || userId;
       }
       
-      await addDoc(collection(db, 'rounds'), roundData);
-      console.log('✅ Round added');
+      // CORREÇÃO CRÍTICA: Se a ronda tem um ID específico, usar setDoc
+      if (round.id) {
+        console.log('💾 Creating round with specific ID:', round.id);
+        const roundRef = doc(db, 'rounds', round.id);
+        await setDoc(roundRef, roundData);
+        console.log('✅ Round added with ID:', round.id);
+      } else {
+        // Se não tem ID, usar addDoc (gera ID automático)
+        const docRef = await addDoc(collection(db, 'rounds'), roundData);
+        console.log('✅ Round added with auto ID:', docRef.id);
+      }
+      
       return { success: true };
     } catch (error) {
       console.error('❌ Error adding round:', error);
@@ -376,63 +411,36 @@ export const firestoreService = {
 
   async updateRound(roundId, updates) {
     try {
-      console.log('🔄 Updating round:', roundId, updates);
+      console.log('🔄 Updating round:', roundId, 'with updates:', updates);
       
-      // ESTRATÉGIA 1: Tentar update direto
-      try {
-        const roundRef = doc(db, 'rounds', roundId);
-        await updateDoc(roundRef, {
-          ...updates,
-          updatedAt: new Date().toISOString()
-        });
-        console.log('✅ Round updated successfully');
-        return { success: true };
-      } catch (updateError) {
-        console.warn('⚠️ Direct update failed:', updateError.message);
-        
-        // ESTRATÉGIA 2: Se falha, verificar se existe
-        const existingRound = await this.getRoundById(roundId);
-        
-        if (!existingRound) {
-          console.log('💾 Round not found, will be created by calling function');
-          return { success: false, error: 'ROUND_NOT_FOUND', needsCreation: true };
-        } else {
-          // Se existe mas update falhou, tentar setDoc
-          console.log('🔄 Trying setDoc as fallback...');
-          const roundRef = doc(db, 'rounds', roundId);
-          await setDoc(roundRef, {
-            ...existingRound,
-            ...updates,
-            updatedAt: new Date().toISOString()
-          }, { merge: true });
-          console.log('✅ Round updated with setDoc');
-          return { success: true };
-        }
+      if (!roundId) {
+        console.error('❌ No roundId provided');
+        return { success: false, error: 'No round ID provided' };
       }
-    } catch (error) {
-      console.error('❌ Error updating round:', error);
-      return { success: false, error: error.message };
-    }
-  },
-
-  async createCompletedRound(roundData) {
-    try {
-      console.log('🆕 Creating completed round:', roundData);
       
-      const completeRoundData = {
-        ...roundData,
-        createdAt: new Date().toISOString(),
+      const roundRef = doc(db, 'rounds', roundId);
+      
+      // Verificar se existe primeiro
+      const roundDoc = await getDoc(roundRef);
+      if (!roundDoc.exists()) {
+        console.error('❌ Round does not exist:', roundId);
+        return { success: false, error: 'Round not found', code: 'ROUND_NOT_FOUND' };
+      }
+      
+      // Adicionar timestamp de atualização
+      const updateData = {
+        ...updates,
         updatedAt: new Date().toISOString()
       };
       
-      // Use setDoc para garantir que o ID específico é usado
-      const roundRef = doc(db, 'rounds', roundData.id);
-      await setDoc(roundRef, completeRoundData);
+      // Tentar atualizar
+      await updateDoc(roundRef, updateData);
       
-      console.log('✅ Completed round created successfully');
+      console.log('✅ Round updated successfully');
       return { success: true };
+      
     } catch (error) {
-      console.error('❌ Error creating completed round:', error);
+      console.error('❌ Error updating round:', error);
       return { success: false, error: error.message };
     }
   },
@@ -441,11 +449,11 @@ export const firestoreService = {
     try {
       console.log('🔍 Getting round by ID:', roundId);
       
-      const snapshot = await getDocs(collection(db, 'rounds'));
-      const round = snapshot.docs.find(doc => doc.id === roundId);
+      const roundRef = doc(db, 'rounds', roundId);
+      const roundDoc = await getDoc(roundRef);
       
-      if (round) {
-        const roundData = { id: round.id, ...round.data() };
+      if (roundDoc.exists()) {
+        const roundData = { id: roundDoc.id, ...roundDoc.data() };
         console.log('📊 Round found:', roundData);
         return roundData;
       } else {
@@ -463,7 +471,6 @@ export const firestoreService = {
       const userId = getCurrentUserId();
       console.log('🎯 Getting current round for user:', userId);
       
-      // Query básica SEM where
       const snapshot = await getDocs(collection(db, 'rounds'));
       let rounds = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -488,7 +495,25 @@ export const firestoreService = {
       console.error('❌ Error getting current round:', error);
       return null;
     }
+  },
+
+  // Função auxiliar para verificar se documento existe
+  async documentExists(collectionName, docId) {
+    try {
+      const docRef = doc(db, collectionName, docId);
+      const docSnap = await getDoc(docRef);
+      return docSnap.exists();
+    } catch (error) {
+      console.error('Error checking document existence:', error);
+      return false;
+    }
   }
 };
+
+// Expor funções globalmente para debug (remover em produção)
+if (typeof window !== 'undefined') {
+  window.firestoreService = firestoreService;
+  window.authService = authService;
+}
 
 export default { authService, firestoreService };
