@@ -1,4 +1,4 @@
-// src/services/firebase.js
+// src/services/firebase.js - VERSÃO SEM ÍNDICES
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -17,14 +17,13 @@ import {
   doc,
   query,
   where,
-  orderBy,
   deleteDoc,
   updateDoc
 } from 'firebase/firestore';
 
 // Substitui com as tuas configurações do Firebase Console
 const firebaseConfig = {
-  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+    apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
   authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
   storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
@@ -37,14 +36,13 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// Helper para obter userId - só se estiver autenticado
+// Helper para obter userId
 const getCurrentUserId = () => {
   return auth.currentUser?.uid || null;
 };
 
 // Auth functions
 export const authService = {
-  // Login
   async signIn(email, password) {
     try {
       const result = await signInWithEmailAndPassword(auth, email, password);
@@ -54,12 +52,10 @@ export const authService = {
     }
   },
 
-  // Register
   async signUp(email, password, displayName) {
     try {
       const result = await createUserWithEmailAndPassword(auth, email, password);
       
-      // Update profile with display name
       if (displayName) {
         await updateProfile(result.user, { displayName });
       }
@@ -70,7 +66,6 @@ export const authService = {
     }
   },
 
-  // Logout
   async signOut() {
     try {
       await signOut(auth);
@@ -80,43 +75,46 @@ export const authService = {
     }
   },
 
-  // Auth state observer
   onAuthStateChanged(callback) {
     return onAuthStateChanged(auth, callback);
   }
 };
 
-// Firestore functions - com isolamento básico por utilizador
+// Firestore functions SEM ÍNDICES - só queries básicas
 export const firestoreService = {
-  // Players
+  
+  // PLAYERS - Query básica + filtro manual
   async getPlayers() {
     try {
       const userId = getCurrentUserId();
+      console.log('🔍 Getting players for user:', userId);
       
+      // Query básica SEM orderBy para evitar índices
+      const snapshot = await getDocs(collection(db, 'players'));
+      let players = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      console.log('📊 Total players in DB:', players.length);
+      
+      // Filtrar por userId manualmente SE estiver autenticado
       if (userId) {
-        // Se está autenticado, buscar só os seus players
-        console.log('🔍 Getting players for user:', userId);
-        const q = query(
-          collection(db, 'players'),
-          where('userId', '==', userId),
-          orderBy('createdAt', 'desc')
-        );
-        const querySnapshot = await getDocs(q);
-        return querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-      } else {
-        // Fallback para compatibilidade
-        console.log('🔍 Getting all players (no user)');
-        const querySnapshot = await getDocs(collection(db, 'players'));
-        return querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
+        players = players.filter(player => player.userId === userId);
+        console.log('📊 Players for user:', players.length);
       }
+      
+      // Ordenar manualmente por data de criação
+      players.sort((a, b) => {
+        const dateA = new Date(a.createdAt || 0);
+        const dateB = new Date(b.createdAt || 0);
+        return dateB - dateA; // Mais recentes primeiro
+      });
+      
+      console.log('✅ Final players list:', players);
+      return players;
     } catch (error) {
-      console.error('Error getting players:', error);
+      console.error('❌ Error getting players:', error);
       return [];
     }
   },
@@ -126,74 +124,87 @@ export const firestoreService = {
       const userId = getCurrentUserId();
       console.log('💾 Saving player:', player, 'for user:', userId);
       
-      // Adicionar userId se está autenticado
       const playerData = {
         ...player,
-        ...(userId && { userId }),
         updatedAt: new Date().toISOString()
       };
 
-      if (player.id && typeof player.id === 'string' && !player.id.startsWith('temp_')) {
-        // Update existing player
+      // Adicionar userId se disponível
+      if (userId) {
+        playerData.userId = userId;
+      }
+
+      // Determinar se é update ou create
+      const isUpdate = player.id && 
+                      typeof player.id === 'string' && 
+                      !player.id.startsWith('temp_') &&
+                      player.id.length > 10;
+
+      if (isUpdate) {
+        console.log('🔄 Updating existing player');
         const playerRef = doc(db, 'players', player.id);
         await updateDoc(playerRef, playerData);
         console.log('✅ Player updated');
-        return { success: true };
+        return { success: true, id: player.id };
       } else {
-        // Add new player - manter o comportamento original
+        console.log('➕ Creating new player');
         if (!playerData.createdAt) {
           playerData.createdAt = new Date().toISOString();
         }
         
-        const playerRef = doc(db, 'players', player.id.toString());
-        await setDoc(playerRef, playerData);
-        console.log('✅ Player saved with ID:', player.id);
-        return { success: true };
+        const docRef = await addDoc(collection(db, 'players'), playerData);
+        console.log('✅ Player created with ID:', docRef.id);
+        return { success: true, id: docRef.id };
       }
     } catch (error) {
-      console.error('Error saving player:', error);
+      console.error('❌ Error saving player:', error);
       return { success: false, error: error.message };
     }
   },
 
   async deletePlayer(playerId) {
     try {
-      await deleteDoc(doc(db, 'players', playerId.toString()));
+      console.log('🗑️ Deleting player:', playerId);
+      await deleteDoc(doc(db, 'players', playerId));
+      console.log('✅ Player deleted');
       return { success: true };
     } catch (error) {
-      console.error('Error deleting player:', error);
+      console.error('❌ Error deleting player:', error);
       return { success: false, error: error.message };
     }
   },
 
-  // Settings
+  // SETTINGS - Query básica + filtro manual
   async getSettings() {
     try {
       const userId = getCurrentUserId();
+      console.log('⚙️ Getting settings for user:', userId);
       
+      const snapshot = await getDocs(collection(db, 'settings'));
+      const allSettings = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Filtrar por userId se disponível
       if (userId) {
-        // Buscar configurações do utilizador
-        console.log('🔍 Getting settings for user:', userId);
-        const q = query(
-          collection(db, 'settings'),
-          where('userId', '==', userId)
-        );
-        const querySnapshot = await getDocs(q);
-        
-        if (!querySnapshot.empty) {
-          return querySnapshot.docs[0].data();
-        }
-      } else {
-        // Fallback para configurações globais
-        const querySnapshot = await getDocs(collection(db, 'settings'));
-        if (!querySnapshot.empty) {
-          return querySnapshot.docs[0].data();
+        const userSettings = allSettings.find(s => s.userId === userId);
+        if (userSettings) {
+          console.log('📊 User settings found:', userSettings);
+          return userSettings;
         }
       }
       
-      return { entryFee: 20, ligaName: 'Liga Record' };
+      // Fallback para configurações globais
+      const globalSettings = allSettings.find(s => !s.userId) || allSettings[0];
+      if (globalSettings) {
+        console.log('📊 Global settings found:', globalSettings);
+        return globalSettings;
+      }
+      
+      // Default settings
+      const defaults = { entryFee: 20, ligaName: 'Liga Record' };
+      console.log('📊 Using default settings:', defaults);
+      return defaults;
     } catch (error) {
-      console.error('Error getting settings:', error);
+      console.error('❌ Error getting settings:', error);
       return { entryFee: 20, ligaName: 'Liga Record' };
     }
   },
@@ -201,57 +212,68 @@ export const firestoreService = {
   async saveSettings(settings) {
     try {
       const userId = getCurrentUserId();
+      console.log('💾 Saving settings for user:', userId);
       
       const settingsData = {
         ...settings,
-        ...(userId && { userId }),
         updatedAt: new Date().toISOString()
       };
 
       if (userId) {
-        // Salvar configurações do utilizador
-        const q = query(
-          collection(db, 'settings'),
-          where('userId', '==', userId)
-        );
-        const querySnapshot = await getDocs(q);
+        settingsData.userId = userId;
         
-        if (!querySnapshot.empty) {
-          const settingsRef = doc(db, 'settings', querySnapshot.docs[0].id);
+        // Procurar configurações existentes do utilizador
+        const snapshot = await getDocs(collection(db, 'settings'));
+        const existingSettings = snapshot.docs.find(doc => {
+          const data = doc.data();
+          return data.userId === userId;
+        });
+        
+        if (existingSettings) {
+          // Update existing
+          const settingsRef = doc(db, 'settings', existingSettings.id);
           await updateDoc(settingsRef, settingsData);
         } else {
+          // Create new
           settingsData.createdAt = new Date().toISOString();
           await addDoc(collection(db, 'settings'), settingsData);
         }
       } else {
-        // Fallback para configurações globais
-        const settingsRef = doc(db, 'settings', 'liga');
+        // Configurações globais
+        const settingsRef = doc(db, 'settings', 'global');
         await setDoc(settingsRef, settingsData);
       }
       
+      console.log('✅ Settings saved');
       return { success: true };
     } catch (error) {
-      console.error('Error saving settings:', error);
+      console.error('❌ Error saving settings:', error);
       return { success: false, error: error.message };
     }
   },
 
-  // Transactions
+  // TRANSACTIONS - Query básica + filtro manual
   async addTransaction(transaction) {
     try {
       const userId = getCurrentUserId();
+      console.log('💸 Adding transaction for user:', userId);
       
       const transactionData = {
         ...transaction,
         timestamp: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
-        ...(userId && { userId, createdBy: userId })
+        createdAt: new Date().toISOString()
       };
       
+      if (userId) {
+        transactionData.userId = userId;
+        transactionData.createdBy = userId;
+      }
+      
       await addDoc(collection(db, 'transactions'), transactionData);
+      console.log('✅ Transaction added');
       return { success: true };
     } catch (error) {
-      console.error('Error adding transaction:', error);
+      console.error('❌ Error adding transaction:', error);
       return { success: false, error: error.message };
     }
   },
@@ -259,89 +281,70 @@ export const firestoreService = {
   async getTransactions() {
     try {
       const userId = getCurrentUserId();
+      console.log('💸 Getting transactions for user:', userId);
       
-      let q;
-      if (userId) {
-        q = query(
-          collection(db, 'transactions'),
-          where('userId', '==', userId),
-          orderBy('timestamp', 'desc')
-        );
-      } else {
-        q = query(
-          collection(db, 'transactions'), 
-          orderBy('timestamp', 'desc')
-        );
-      }
-      
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({
+      // Query básica SEM orderBy
+      const snapshot = await getDocs(collection(db, 'transactions'));
+      let transactions = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
+      
+      console.log('📊 Total transactions in DB:', transactions.length);
+      
+      // Filtrar por userId manualmente
+      if (userId) {
+        transactions = transactions.filter(t => t.userId === userId);
+        console.log('📊 Transactions for user:', transactions.length);
+      }
+      
+      // Ordenar manualmente por timestamp
+      transactions.sort((a, b) => {
+        const dateA = new Date(a.timestamp || a.createdAt || 0);
+        const dateB = new Date(b.timestamp || b.createdAt || 0);
+        return dateB - dateA; // Mais recentes primeiro
+      });
+      
+      console.log('✅ Final transactions list:', transactions.length);
+      return transactions;
     } catch (error) {
-      console.error('Error getting transactions:', error);
+      console.error('❌ Error getting transactions:', error);
       return [];
     }
   },
 
-  async getPlayerTransactions(playerId) {
-    try {
-      const userId = getCurrentUserId();
-      
-      let q;
-      if (userId) {
-        q = query(
-          collection(db, 'transactions'),
-          where('userId', '==', userId),
-          where('playerId', '==', playerId),
-          orderBy('timestamp', 'desc')
-        );
-      } else {
-        q = query(
-          collection(db, 'transactions'),
-          where('playerId', '==', playerId),
-          orderBy('timestamp', 'desc')
-        );
-      }
-      
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-    } catch (error) {
-      console.error('Error getting player transactions:', error);
-      return [];
-    }
-  },
-
-  // Rounds functions
+  // ROUNDS - Query básica + filtro manual
   async getRounds() {
     try {
       const userId = getCurrentUserId();
+      console.log('🎯 Getting rounds for user:', userId);
       
-      let q;
-      if (userId) {
-        q = query(
-          collection(db, 'rounds'),
-          where('userId', '==', userId),
-          orderBy('createdAt', 'desc')
-        );
-      } else {
-        q = query(
-          collection(db, 'rounds'), 
-          orderBy('createdAt', 'desc')
-        );
-      }
-      
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({
+      // Query básica SEM orderBy
+      const snapshot = await getDocs(collection(db, 'rounds'));
+      let rounds = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
+      
+      console.log('📊 Total rounds in DB:', rounds.length);
+      
+      // Filtrar por userId manualmente
+      if (userId) {
+        rounds = rounds.filter(r => r.userId === userId);
+        console.log('📊 Rounds for user:', rounds.length);
+      }
+      
+      // Ordenar manualmente por data de criação
+      rounds.sort((a, b) => {
+        const dateA = new Date(a.createdAt || 0);
+        const dateB = new Date(b.createdAt || 0);
+        return dateB - dateA;
+      });
+      
+      console.log('✅ Final rounds list:', rounds.length);
+      return rounds;
     } catch (error) {
-      console.error('Error getting rounds:', error);
+      console.error('❌ Error getting rounds:', error);
       return [];
     }
   },
@@ -349,18 +352,24 @@ export const firestoreService = {
   async addRound(round) {
     try {
       const userId = getCurrentUserId();
+      console.log('🎯 Adding round for user:', userId);
       
       const roundData = {
         ...round,
         timestamp: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
-        ...(userId && { userId, createdBy: userId })
+        createdAt: new Date().toISOString()
       };
       
+      if (userId) {
+        roundData.userId = userId;
+        roundData.createdBy = userId;
+      }
+      
       await addDoc(collection(db, 'rounds'), roundData);
+      console.log('✅ Round added');
       return { success: true };
     } catch (error) {
-      console.error('Error adding round:', error);
+      console.error('❌ Error adding round:', error);
       return { success: false, error: error.message };
     }
   },
@@ -369,48 +378,114 @@ export const firestoreService = {
     try {
       console.log('🔄 Updating round:', roundId, updates);
       
-      const roundRef = doc(db, 'rounds', roundId.toString());
-      const updateData = {
-        ...updates,
-        updatedAt: new Date().toISOString()
-      };
-      
-      await updateDoc(roundRef, updateData);
-      console.log('✅ Round updated successfully');
-      return { success: true };
+      // ESTRATÉGIA 1: Tentar update direto
+      try {
+        const roundRef = doc(db, 'rounds', roundId);
+        await updateDoc(roundRef, {
+          ...updates,
+          updatedAt: new Date().toISOString()
+        });
+        console.log('✅ Round updated successfully');
+        return { success: true };
+      } catch (updateError) {
+        console.warn('⚠️ Direct update failed:', updateError.message);
+        
+        // ESTRATÉGIA 2: Se falha, verificar se existe
+        const existingRound = await this.getRoundById(roundId);
+        
+        if (!existingRound) {
+          console.log('💾 Round not found, will be created by calling function');
+          return { success: false, error: 'ROUND_NOT_FOUND', needsCreation: true };
+        } else {
+          // Se existe mas update falhou, tentar setDoc
+          console.log('🔄 Trying setDoc as fallback...');
+          const roundRef = doc(db, 'rounds', roundId);
+          await setDoc(roundRef, {
+            ...existingRound,
+            ...updates,
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+          console.log('✅ Round updated with setDoc');
+          return { success: true };
+        }
+      }
     } catch (error) {
       console.error('❌ Error updating round:', error);
       return { success: false, error: error.message };
     }
   },
 
+  async createCompletedRound(roundData) {
+    try {
+      console.log('🆕 Creating completed round:', roundData);
+      
+      const completeRoundData = {
+        ...roundData,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      
+      // Use setDoc para garantir que o ID específico é usado
+      const roundRef = doc(db, 'rounds', roundData.id);
+      await setDoc(roundRef, completeRoundData);
+      
+      console.log('✅ Completed round created successfully');
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Error creating completed round:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async getRoundById(roundId) {
+    try {
+      console.log('🔍 Getting round by ID:', roundId);
+      
+      const snapshot = await getDocs(collection(db, 'rounds'));
+      const round = snapshot.docs.find(doc => doc.id === roundId);
+      
+      if (round) {
+        const roundData = { id: round.id, ...round.data() };
+        console.log('📊 Round found:', roundData);
+        return roundData;
+      } else {
+        console.log('⚠️ Round not found with ID:', roundId);
+        return null;
+      }
+    } catch (error) {
+      console.error('❌ Error getting round by ID:', error);
+      return null;
+    }
+  },
+
   async getCurrentRound() {
     try {
       const userId = getCurrentUserId();
+      console.log('🎯 Getting current round for user:', userId);
       
-      let q;
+      // Query básica SEM where
+      const snapshot = await getDocs(collection(db, 'rounds'));
+      let rounds = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      // Filtrar manualmente
       if (userId) {
-        q = query(
-          collection(db, 'rounds'),
-          where('userId', '==', userId),
-          where('status', '==', 'active'),
-          orderBy('createdAt', 'desc')
-        );
+        rounds = rounds.filter(r => r.userId === userId && r.status === 'active');
       } else {
-        q = query(
-          collection(db, 'rounds'),
-          where('status', '==', 'active'),
-          orderBy('createdAt', 'desc')
-        );
+        rounds = rounds.filter(r => r.status === 'active');
       }
       
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.length > 0 ? {
-        id: querySnapshot.docs[0].id,
-        ...querySnapshot.docs[0].data()
-      } : null;
+      // Ordenar e pegar o mais recente
+      rounds.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      
+      const currentRound = rounds.length > 0 ? rounds[0] : null;
+      console.log('📊 Current round:', currentRound);
+      
+      return currentRound;
     } catch (error) {
-      console.error('Error getting current round:', error);
+      console.error('❌ Error getting current round:', error);
       return null;
     }
   }

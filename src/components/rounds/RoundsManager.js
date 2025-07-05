@@ -4,6 +4,37 @@ import { Calendar, Trophy, Users, Euro, Plus, Edit, Eye, Target, TrendingDown, A
 import { useAuth } from '../../hooks/useAuth';
 import { firestoreService } from '../../services/firebase';
 
+const getDefaultPaymentStructure = (playerCount) => {
+    if (!playerCount || playerCount <= 0) return [0];
+    
+    console.log('🏗️ Creating payment structure for', playerCount, 'players');
+    
+    if (playerCount <= 4) {
+      return [0, 0.25, 0.5, 1].slice(0, playerCount);
+    } else if (playerCount <= 6) {
+      return [0, 0.25, 0.5, 1, 1.5, 2].slice(0, playerCount);
+    } else if (playerCount <= 8) {
+      return [0, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5].slice(0, playerCount);
+    } else if (playerCount <= 10) {
+      return [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5].slice(0, playerCount);
+    } else if (playerCount <= 12) {
+      return [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3].slice(0, playerCount);
+    } else {
+      // Para mais de 12 jogadores, criar estrutura dinâmica
+      const structure = [0]; // 1º lugar sempre grátis
+      const increment = 0.25;
+      const maxPayment = 3;
+      
+      for (let i = 1; i < playerCount; i++) {
+        const payment = Math.min(increment * i, maxPayment);
+        structure.push(payment);
+      }
+      
+      console.log('📊 Generated structure for', playerCount, 'players:', structure);
+      return structure.slice(0, playerCount);
+    }
+  };
+
 // Helper para calcular semana do ano
 Date.prototype.getWeek = function() {
   const onejan = new Date(this.getFullYear(), 0, 1);
@@ -126,9 +157,11 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
 
       console.log('💰 Calculated participants with payments:', updatedParticipants);
 
-      // Update round status to completed FIRST
-      console.log('📝 Updating round status to completed...');
-      const roundUpdateResult = await firestoreService.updateRound(roundId, {
+      // CORREÇÃO ROBUSTA: Tentar update, se falhar criar nova
+      const actualRoundId = currentRound.id || roundId;
+      console.log('📝 Updating round with ID:', actualRoundId);
+
+      const roundUpdateResult = await firestoreService.updateRound(actualRoundId, {
         status: 'completed',
         participants: updatedParticipants,
         completedAt: new Date().toISOString()
@@ -136,10 +169,30 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
 
       console.log('📝 Round update result:', roundUpdateResult);
 
-      if (!roundUpdateResult.success) {
-        // REVERT UI STATE on error
+      // Se o update falhou porque a ronda não existe
+      if (!roundUpdateResult.success && roundUpdateResult.needsCreation) {
+        console.log('🆕 Creating new completed round...');
+        
+        const completeRoundData = {
+          ...currentRound,
+          id: actualRoundId,
+          status: 'completed',
+          participants: updatedParticipants,
+          completedAt: new Date().toISOString()
+        };
+        
+        const createResult = await firestoreService.createCompletedRound(completeRoundData);
+        
+        if (!createResult.success) {
+          setCurrentRound(prev => ({ ...prev, status: 'active' }));
+          throw new Error('Failed to create completed round: ' + createResult.error);
+        }
+        
+        console.log('✅ Round created as completed');
+      } else if (!roundUpdateResult.success) {
+        // Outro tipo de erro
         setCurrentRound(prev => ({ ...prev, status: 'active' }));
-        throw new Error('Failed to update round status: ' + (roundUpdateResult.error || 'Unknown error'));
+        throw new Error('Failed to update round status: ' + roundUpdateResult.error);
       }
 
       // Update player balances and add round points to their history
@@ -223,7 +276,8 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
       await new Promise(resolve => setTimeout(resolve, 1000)); // Longer delay to ensure DB consistency
       await loadRounds();
       
-      // CLEAR states immediately - prevent multiple rounds
+      // CRITICAL: CLEAR current round immediately after successful completion
+      console.log('🗑️ Clearing current round from state...');
       setCurrentRound(null);
       setShowFinishRound(null);
       
@@ -299,7 +353,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
       </div>
 
       {/* Current Round Status */}
-      {currentRound ? (
+      {currentRound && currentRound.status === 'active' ? (
         <div className="bg-gradient-to-r from-blue-50 to-green-50 rounded-lg shadow-md p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-3">
@@ -310,12 +364,17 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
               <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium">
                 Em Curso
               </span>
+              {/* BOTÃO MAIS SOFT PARA FINALIZAR - COM PROTEÇÃO EXTRA */}
               <button
-                onClick={() => setShowFinishRound(currentRound)}
-                disabled={loading || currentRound.status === 'processing'}
-                className="bg-blue-600 text-white px-4 py-1 rounded-full text-sm hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => {
+                  if (currentRound && currentRound.status === 'active' && !loading) {
+                    setShowFinishRound(currentRound);
+                  }
+                }}
+                disabled={loading || currentRound.status !== 'active' || showFinishRound}
+                className="bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-md"
               >
-                {loading || currentRound.status === 'processing' ? 'A processar...' : 'Finalizar Ronda'}
+                {loading ? '⏳ A processar...' : '🏁 Finalizar Ronda'}
               </button>
             </div>
           </div>
@@ -598,7 +657,7 @@ const CreateRoundModal = ({ players, onClose, onSubmit, getDefaultPaymentStructu
   );
 };
 
-// Modal para finalizar ronda
+// Modal para finalizar ronda - VERSÃO COMPACTA
 const FinishRoundModal = ({ round, onClose, onSubmit, loading }) => {
   const [results, setResults] = useState(
     (round.participants || []).map(p => ({ ...p, points: 0 }))
@@ -620,77 +679,106 @@ const FinishRoundModal = ({ round, onClose, onSubmit, loading }) => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-90vh overflow-y-auto">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold">🏁 Finalizar {round.name}</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">✕</button>
+      <div className="bg-white rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col shadow-2xl">
+        
+        {/* Header Compacto */}
+        <div className="flex justify-between items-center p-4 border-b border-gray-200 bg-blue-50 flex-shrink-0 rounded-t-2xl">
+          <h3 className="text-lg font-semibold text-blue-800">🏁 Finalizar {round.name}</h3>
+          <button 
+            onClick={onClose} 
+            className="text-gray-500 hover:text-gray-700 text-xl font-bold w-8 h-8 flex items-center justify-center"
+          >
+            ✕
+          </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="bg-blue-50 p-4 rounded-lg mb-4">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          
+          {/* Info Compacta */}
+          <div className="px-4 py-2 bg-blue-50 border-b flex-shrink-0">
             <p className="text-sm text-blue-800">
-              📊 Insere os pontos finais de cada jogador. A classificação será calculada automaticamente.
+              📊 Insere os pontos de cada jogador. A classificação é calculada automaticamente.
             </p>
           </div>
 
-          <div className="space-y-3">
-            {results.map(participant => (
-              <div key={participant.playerId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                <span className="font-medium">{participant.playerName}</span>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="number"
-                    min="0"
-                    value={participant.points}
-                    onChange={(e) => handlePointsChange(participant.playerId, e.target.value)}
-                    className="w-20 px-2 py-1 border border-gray-300 rounded text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    placeholder="0"
-                  />
-                  <span className="text-sm text-gray-600">pts</span>
+          {/* Conteúdo Principal - COM SCROLL */}
+          <div className="flex-1 min-h-0 flex">
+            
+            {/* Coluna Esquerda: Input de Pontos */}
+            <div className="w-1/2 border-r border-gray-200 flex flex-col">
+              <div className="p-4 border-b bg-gray-50 flex-shrink-0">
+                <h4 className="font-semibold text-gray-800">✏️ Inserir Pontos</h4>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="space-y-2">
+                  {results.map(participant => (
+                    <div key={participant.playerId} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                      <span className="font-medium text-sm">{participant.playerName}</span>
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="number"
+                          min="0"
+                          value={participant.points}
+                          onChange={(e) => handlePointsChange(participant.playerId, e.target.value)}
+                          className="w-16 px-2 py-1 border border-gray-300 rounded text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="0"
+                        />
+                        <span className="text-xs text-gray-600">pts</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
+            </div>
 
-          <div className="bg-gray-50 p-4 rounded-lg">
-            <h4 className="font-semibold text-gray-800 mb-3">🏆 Classificação Atual:</h4>
-            <div className="space-y-2">
-              {sortedResults.map((participant, index) => (
-                <div key={participant.playerId} className="flex justify-between items-center">
-                  <div className="flex items-center space-x-2">
-                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-sm font-bold ${
-                      index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : index === 2 ? 'bg-orange-500' : 'bg-blue-500'
-                    }`}>
-                      {index + 1}
-                    </span>
-                    <span>{participant.playerName}</span>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-bold">{participant.points} pts</div>
-                    <div className={`text-sm ${(round.paymentStructure && round.paymentStructure[index] === 0) ? 'text-green-600' : 'text-red-600'}`}>
-                      {(round.paymentStructure && round.paymentStructure[index] === 0) ? 'Grátis' : `${((round.paymentStructure && round.paymentStructure[index]) || 0).toFixed(2)}€`}
+            {/* Coluna Direita: Classificação */}
+            <div className="w-1/2 flex flex-col">
+              <div className="p-4 border-b bg-gray-50 flex-shrink-0">
+                <h4 className="font-semibold text-gray-800">🏆 Classificação</h4>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="space-y-2">
+                  {sortedResults.map((participant, index) => (
+                    <div key={participant.playerId} className="flex justify-between items-center p-2 bg-gray-50 rounded">
+                      <div className="flex items-center space-x-2">
+                        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold ${
+                          index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : index === 2 ? 'bg-orange-500' : 'bg-blue-500'
+                        }`}>
+                          {index + 1}
+                        </span>
+                        <span className="text-sm font-medium">{participant.playerName}</span>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-bold text-sm">{participant.points} pts</div>
+                        <div className={`text-xs ${(round.paymentStructure && round.paymentStructure[index] === 0) ? 'text-green-600' : 'text-red-600'}`}>
+                          {(round.paymentStructure && round.paymentStructure[index] === 0) ? 'Grátis' : `${((round.paymentStructure && round.paymentStructure[index]) || 0).toFixed(2)}€`}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
-              ))}
+              </div>
             </div>
           </div>
 
-          <div className="flex space-x-3 pt-4">
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
-            >
-              {loading ? 'A finalizar...' : 'Finalizar Ronda'}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 bg-gray-500 text-white py-2 rounded-lg hover:bg-gray-600 transition-colors"
-            >
-              Cancelar
-            </button>
+          {/* Footer com Botões - TAMANHO NORMAL */}
+          <div className="flex-shrink-0 bg-white border-t border-gray-200 p-4 rounded-b-2xl">
+            <div className="flex space-x-3">
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex-1 bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 font-medium shadow-md"
+              >
+                {loading ? '⏳ A finalizar...' : '✅ Confirmar e Finalizar'}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 bg-gray-500 text-white py-2 px-4 rounded-lg hover:bg-gray-600 transition-colors font-medium"
+              >
+                ❌ Cancelar
+              </button>
+            </div>
           </div>
         </form>
       </div>
