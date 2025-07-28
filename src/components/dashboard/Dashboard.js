@@ -1,4 +1,5 @@
-// src/components/dashboard/Dashboard.js - Versão Completa Corrigida
+// src/components/dashboard/Dashboard.js - VERSÃO CORRIGIDA
+
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { firestoreService } from '../../services/firebase';
@@ -8,6 +9,7 @@ import StatsCards from './StatsCards';
 import PlayerList from '../players/PlayerList';
 import PlayerProfile from '../players/PlayerProfile';
 import RoundsManager from '../rounds/RoundsManager';
+import FinancialReport from '../financial/FinancialReport';
 
 const Dashboard = () => {
   const [players, setPlayers] = useState([]);
@@ -17,14 +19,14 @@ const Dashboard = () => {
   const [viewingProfile, setViewingProfile] = useState(null);
   const [currentView, setCurrentView] = useState('dashboard');
   const [error, setError] = useState(null);
-  const [isAddingPlayer, setIsAddingPlayer] = useState(false); // Prevent multiple adds
+  const [isAddingPlayer, setIsAddingPlayer] = useState(false);
 
   const { user } = useAuth();
 
   useEffect(() => {
     console.log('🔄 Dashboard useEffect triggered');
     loadData();
-  }, []); // Empty dependency array - only run once!
+  }, []);
 
   const loadData = async () => {
     try {
@@ -75,7 +77,6 @@ const Dashboard = () => {
   };
 
   const addPlayer = async (playerName) => {
-    // PREVENT MULTIPLE SIMULTANEOUS ADDITIONS
     if (isAddingPlayer) {
       console.warn('⚠️ Already adding a player, ignoring duplicate request');
       return;
@@ -85,7 +86,6 @@ const Dashboard = () => {
       setIsAddingPlayer(true);
       console.log('➕ Adding player:', playerName);
       
-      // CHECK IF PLAYER ALREADY EXISTS
       const existingPlayer = players.find(p => 
         p.name.toLowerCase().trim() === playerName.toLowerCase().trim()
       );
@@ -95,7 +95,6 @@ const Dashboard = () => {
         return;
       }
 
-      // CREATE UNIQUE ID with timestamp + random
       const uniqueId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       const newPlayer = {
@@ -143,7 +142,6 @@ const Dashboard = () => {
     try {
       console.log('🔄 Updating player:', updatedPlayer);
       
-      // Salvar no Firebase
       const saveResult = await firestoreService.savePlayer(updatedPlayer);
       if (!saveResult.success) {
         throw new Error(saveResult.error || 'Failed to update player');
@@ -151,18 +149,12 @@ const Dashboard = () => {
 
       console.log('✅ Player saved to database');
 
-      // Opção 1: Atualizar localmente para resposta imediata
       setPlayers(prevPlayers => 
         prevPlayers.map(p => 
           p.id === updatedPlayer.id ? updatedPlayer : p
         )
       );
-
-      // Opção 2: Recarregar todos os dados para garantir consistência
-      // Descomentar se preferir esta abordagem:
-      // await loadData();
       
-      // Se estamos a ver o perfil, fechar e voltar à lista
       if (viewingProfile && viewingProfile.id === updatedPlayer.id) {
         setViewingProfile(null);
       }
@@ -172,7 +164,6 @@ const Dashboard = () => {
     } catch (error) {
       console.error('❌ Error updating player:', error);
       setError('Erro ao atualizar jogador: ' + error.message);
-      // Recarregar dados em caso de erro para garantir consistência
       await loadData();
     }
   };
@@ -181,10 +172,8 @@ const Dashboard = () => {
     try {
       console.log('🗑️ Removing player with ID:', playerId, 'Type:', typeof playerId);
       
-      // Garantir que o ID é uma string
       const playerIdString = String(playerId);
       
-      // Encontrar o jogador
       const player = players.find(p => String(p.id) === playerIdString);
       if (!player) {
         console.error('Player not found with ID:', playerId);
@@ -208,7 +197,6 @@ const Dashboard = () => {
 
       console.log('🗑️ Deleting player from database...');
       
-      // Primeiro adicionar transação de remoção
       await firestoreService.addTransaction({
         playerId: playerIdString,
         playerName: player.name,
@@ -219,7 +207,6 @@ const Dashboard = () => {
         timestamp: new Date().toISOString()
       });
 
-      // Depois eliminar o jogador
       const deleteResult = await firestoreService.deletePlayer(playerIdString);
       
       if (!deleteResult.success) {
@@ -228,10 +215,8 @@ const Dashboard = () => {
 
       console.log('✅ Player removed successfully');
       
-      // Recarregar dados imediatamente
       await loadData();
       
-      // Notificar sucesso
       alert(`✅ ${player.name} foi removido da liga com sucesso!`);
       
     } catch (error) {
@@ -288,7 +273,6 @@ const Dashboard = () => {
           
           const deleteResult = await firestoreService.deletePlayer(String(player.id));
           if (deleteResult.success) {
-            // Add removal transaction
             await firestoreService.addTransaction({
               playerId: String(player.id),
               playerName: player.name,
@@ -309,7 +293,6 @@ const Dashboard = () => {
 
       console.log(`✅ Bulk deletion completed: ${deletedCount}/${totalPlayers} deleted`);
       
-      // Reload data
       await loadData();
       
       alert(`🎉 Eliminação concluída!\n\n${deletedCount} de ${totalPlayers} jogadores foram eliminados com sucesso.`);
@@ -324,11 +307,9 @@ const Dashboard = () => {
     try {
       console.log('🧹 Starting duplicate cleanup...');
       
-      // Get all players from database
       const allPlayers = await firestoreService.getPlayers();
       console.log('📊 Total players in DB:', allPlayers.length);
       
-      // Find duplicates by name
       const duplicateGroups = {};
       allPlayers.forEach(player => {
         const normalizedName = player.name.toLowerCase().trim();
@@ -338,7 +319,6 @@ const Dashboard = () => {
         duplicateGroups[normalizedName].push(player);
       });
       
-      // Find groups with more than 1 player
       const duplicates = Object.values(duplicateGroups).filter(group => group.length > 1);
       
       if (duplicates.length === 0) {
@@ -362,11 +342,10 @@ const Dashboard = () => {
       let cleanedCount = 0;
       
       for (const group of duplicates) {
-        // Sort by creation date, keep the newest
         group.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
         
-        const keepPlayer = group[0]; // Most recent
-        const deleteList = group.slice(1); // All others
+        const keepPlayer = group[0];
+        const deleteList = group.slice(1);
         
         console.log(`🧹 Keeping: ${keepPlayer.name} (${keepPlayer.id})`);
         console.log(`🗑️ Deleting ${deleteList.length} duplicates...`);
@@ -480,7 +459,7 @@ const Dashboard = () => {
           <Header settings={settings} onSettingsChange={handleSettingsChange} />
         </div>
         
-        {/* Navigation Tabs */}
+        {/* Navigation Tabs - VERSÃO CORRIGIDA */}
         <div className="bg-white rounded-xl shadow-lg mb-8 overflow-hidden">
           <div className="flex border-b border-gray-100">
             <button
@@ -496,6 +475,7 @@ const Dashboard = () => {
                 <span>Dashboard Geral</span>
               </div>
             </button>
+            
             <button
               onClick={() => setCurrentView('rounds')}
               className={`flex-1 px-6 py-4 font-semibold transition-all duration-200 ${
@@ -507,6 +487,21 @@ const Dashboard = () => {
               <div className="flex items-center justify-center space-x-2">
                 <span className="text-xl">⚽</span>
                 <span>Rondas Semanais</span>
+              </div>
+            </button>
+            
+            {/* BOTÃO RELATÓRIOS FINANCEIROS */}
+            <button
+              onClick={() => setCurrentView('financial')}
+              className={`flex-1 px-6 py-4 font-semibold transition-all duration-200 ${
+                currentView === 'financial'
+                  ? 'text-purple-600 bg-purple-50 border-b-3 border-purple-600'
+                  : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
+              }`}
+            >
+              <div className="flex items-center justify-center space-x-2">
+                <span className="text-xl">💰</span>
+                <span>Relatórios Financeiros</span>
               </div>
             </button>
           </div>
@@ -548,7 +543,7 @@ const Dashboard = () => {
                 <StatsCards players={players} settings={settings} />
               </div>
               
-              {/* Players List - Simplificado */}
+              {/* Players List */}
               <PlayerList
                 players={players}
                 onViewProfile={setViewingProfile}
@@ -574,9 +569,27 @@ const Dashboard = () => {
                 <RoundsManager
                   players={players}
                   onUpdatePlayers={(updatedPlayers) => {
-                    loadData(); // Sempre recarregar para garantir consistência
+                    loadData();
                   }}
                   settings={settings}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* VIEW RELATÓRIOS FINANCEIROS */}
+          {currentView === 'financial' && (
+            <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+              <div className="bg-gradient-to-r from-purple-600 to-pink-600 px-6 py-4">
+                <h2 className="text-xl font-bold text-white flex items-center">
+                  <span className="mr-3">💰</span>
+                  Relatórios Financeiros e Gestão de Pagamentos
+                </h2>
+              </div>
+              <div className="p-6">
+                <FinancialReport 
+                  onBack={() => setCurrentView('dashboard')}
+                  players={players}
                 />
               </div>
             </div>

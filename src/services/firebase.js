@@ -1,4 +1,4 @@
-// src/services/firebase.js - VERSÃO CORRIGIDA
+// src/services/firebase.js - VERSÃO COMPLETA CORRIGIDA
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -19,7 +19,7 @@ import {
   where,
   deleteDoc,
   updateDoc,
-  getDoc  // ADICIONADO
+  getDoc
 } from 'firebase/firestore';
 
 // Substitui com as tuas configurações do Firebase Console
@@ -339,7 +339,7 @@ export const firestoreService = {
     }
   },
 
-  // ROUNDS - CORRIGIDO
+  // ROUNDS
   async getRounds() {
     try {
       const userId = getCurrentUserId();
@@ -497,7 +497,6 @@ export const firestoreService = {
     }
   },
 
-  // NOVA FUNÇÃO - Deletar Ronda
   async deleteRound(roundId) {
     try {
       console.log('🗑️ Attempting to delete round with ID:', roundId);
@@ -527,6 +526,178 @@ export const firestoreService = {
       console.error('Error code:', error.code);
       console.error('Error message:', error.message);
       
+      return { success: false, error: error.message };
+    }
+  },
+
+  // FINANCIAL REPORTS
+  async generateFinancialReport(leagueId = 'default') {
+    try {
+      const userId = getCurrentUserId();
+      console.log('📊 Generating financial report for user:', userId);
+      
+      // 1. Verificar se existem 5 rondas completas
+      const rounds = await this.getRounds();
+      const completedRounds = rounds.filter(r => r.status === 'completed');
+      
+      if (completedRounds.length < 5) {
+        return { 
+          success: false, 
+          error: `Apenas ${completedRounds.length} rondas completas. Necessário 5.` 
+        };
+      }
+      
+      // 2. Buscar todos os jogadores
+      const players = await this.getPlayers();
+      
+      // 3. Calcular sumário financeiro
+      const playerSummary = players.map(player => {
+        const roundsPlayed = completedRounds.filter(round => 
+          round.participants?.some(p => p.playerId === player.id)
+        );
+        
+        const totalPaid = roundsPlayed.reduce((sum, round) => {
+          const participant = round.participants.find(p => p.playerId === player.id);
+          return sum + (participant?.weeklyPayment || 0);
+        }, 0);
+        
+        return {
+          playerId: player.id,
+          playerName: player.name,
+          currentBalance: player.balance || 0,
+          totalPaid: totalPaid,
+          totalOwed: Math.abs(Math.min(0, player.balance || 0)),
+          netBalance: player.balance || 0,
+          roundsPlayed: roundsPlayed.length
+        };
+      });
+      
+      // 4. Calcular totais
+      const totals = {
+        totalToCollect: playerSummary.reduce((sum, p) => sum + p.totalOwed, 0),
+        totalToPay: playerSummary.reduce((sum, p) => sum + Math.max(0, p.netBalance), 0),
+        netBalance: playerSummary.reduce((sum, p) => sum + p.netBalance, 0)
+      };
+      
+      // 5. Criar documento do relatório
+      const reportData = {
+        leagueId,
+        userId,
+        season: new Date().getFullYear(),
+        generatedAt: new Date().toISOString(),
+        generatedBy: userId,
+        playerSummary,
+        totals,
+        rounds: completedRounds.map(r => ({
+          roundId: r.id,
+          roundName: r.name,
+          completedAt: r.completedAt,
+          participants: r.participants
+        })),
+        status: 'final'
+      };
+      
+      // 6. Guardar no Firestore
+      const docRef = await addDoc(collection(db, 'financialReports'), reportData);
+      console.log('✅ Financial report generated:', docRef.id);
+      
+      // 7. Criar registos de tracking de pagamentos
+      const paymentTracking = playerSummary
+        .filter(p => p.totalOwed > 0)
+        .map(p => ({
+          reportId: docRef.id,
+          userId,
+          playerId: p.playerId,
+          playerName: p.playerName,
+          amountOwed: p.totalOwed,
+          amountPaid: 0,
+          paymentStatus: 'pending',
+          createdAt: new Date().toISOString()
+        }));
+      
+      // Adicionar tracking de pagamentos
+      for (const payment of paymentTracking) {
+        await addDoc(collection(db, 'paymentTracking'), payment);
+      }
+      
+      return { 
+        success: true, 
+        reportId: docRef.id,
+        data: reportData 
+      };
+      
+    } catch (error) {
+      console.error('❌ Error generating financial report:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async getFinancialReports() {
+    try {
+      const userId = getCurrentUserId();
+      const snapshot = await getDocs(collection(db, 'financialReports'));
+      
+      let reports = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      if (userId) {
+        reports = reports.filter(r => r.userId === userId);
+      }
+      
+      reports.sort((a, b) => new Date(b.generatedAt) - new Date(a.generatedAt));
+      
+      return reports;
+    } catch (error) {
+      console.error('❌ Error getting financial reports:', error);
+      return [];
+    }
+  },
+
+  async getFinancialReport(reportId) {
+    try {
+      const docRef = doc(db, 'financialReports', reportId);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        return { id: docSnap.id, ...docSnap.data() };
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('❌ Error getting financial report:', error);
+      return null;
+    }
+  },
+
+  async updatePaymentStatus(paymentId, amountPaid, notes) {
+    try {
+      const userId = getCurrentUserId();
+      const paymentRef = doc(db, 'paymentTracking', paymentId);
+      
+      // Primeiro, buscar o documento para obter o amountOwed
+      const paymentDoc = await getDoc(paymentRef);
+      if (!paymentDoc.exists()) {
+        throw new Error('Payment record not found');
+      }
+      
+      const paymentData = paymentDoc.data();
+      const amountOwed = paymentData.amountOwed || 0;
+      
+      const updates = {
+        amountPaid,
+        paymentStatus: amountPaid >= amountOwed ? 'paid' : 'partial',
+        paidAt: new Date().toISOString(),
+        confirmedBy: userId,
+        notes
+      };
+      
+      await updateDoc(paymentRef, updates);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Error updating payment:', error);
       return { success: false, error: error.message };
     }
   },
