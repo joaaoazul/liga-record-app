@@ -26,7 +26,7 @@ const Header = ({ settings, onSettingsChange }) => {
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-3">
           <Trophy className="h-8 w-8 text-green-600" />
-          <h1 className="text-3xl font-bold text-gray-800">⚽ Liga Record</h1>
+          <h1 className="text-3xl font-bold text-gray-800">⚽ Liga Record dos Cuícos</h1>
           <div className="flex items-center space-x-1">
             <Cloud className="h-5 w-5 text-green-600" />
             <span className="text-sm text-green-600">✅ Conectado</span>

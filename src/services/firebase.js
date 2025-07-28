@@ -497,6 +497,40 @@ export const firestoreService = {
     }
   },
 
+  // NOVA FUNÇÃO - Deletar Ronda
+  async deleteRound(roundId) {
+    try {
+      console.log('🗑️ Attempting to delete round with ID:', roundId);
+      
+      if (!roundId) {
+        console.error('❌ No roundId provided');
+        return { success: false, error: 'No round ID provided' };
+      }
+      
+      // Verificar se o documento existe primeiro
+      const roundRef = doc(db, 'rounds', roundId);
+      const roundDoc = await getDoc(roundRef);
+      
+      if (!roundDoc.exists()) {
+        console.error('❌ Round document does not exist:', roundId);
+        return { success: false, error: 'Round not found in database' };
+      }
+      
+      console.log('📄 Round exists, proceeding with deletion...');
+      await deleteDoc(roundRef);
+      console.log('✅ Round deleted successfully');
+      
+      return { success: true };
+      
+    } catch (error) {
+      console.error('❌ Error deleting round:', error);
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+      
+      return { success: false, error: error.message };
+    }
+  },
+
   // Função auxiliar para verificar se documento existe
   async documentExists(collectionName, docId) {
     try {
