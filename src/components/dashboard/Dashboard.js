@@ -1,10 +1,9 @@
-// src/components/dashboard/Dashboard.js - VERSÃO CORRIGIDA
-
+// src/components/dashboard/Dashboard.js - VERSÃO CORRIGIDA E OTIMIZADA
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { firestoreService } from '../../services/firebase';
 import Header from '../common/Header';
-import Loading from '../common/Loading';
 import StatsCards from './StatsCards';
 import PlayerList from '../players/PlayerList';
 import PlayerProfile from '../players/PlayerProfile';
@@ -14,60 +13,55 @@ import FinancialReport from '../financial/FinancialReport';
 const Dashboard = () => {
   const [players, setPlayers] = useState([]);
   const [transactions, setTransactions] = useState([]);
-  const [settings, setSettings] = useState({ entryFee: 20, ligaName: 'Liga Record' });
+  const [rounds, setRounds] = useState([]);
+  const [settings, setSettings] = useState({
+    entryFee: 20,
+    weeklyPayment: 5,
+    distributionPercentages: [40, 30, 20, 10]
+  });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [viewingProfile, setViewingProfile] = useState(null);
   const [currentView, setCurrentView] = useState('dashboard');
-  const [error, setError] = useState(null);
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
 
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
-    console.log('🔄 Dashboard useEffect triggered');
-    loadData();
-  }, []);
+    if (!user) {
+      navigate('/login');
+    } else {
+      loadData();
+    }
+  }, [user, navigate]);
 
   const loadData = async () => {
     try {
       setLoading(true);
       setError(null);
+      console.log('🔄 Loading all data...');
       
-      console.log('🔄 Loading data... Timestamp:', new Date().toISOString());
-      
-      const [playersData, settingsData, transactionsData] = await Promise.all([
+      const [playersData, transactionsData, settingsData, roundsData] = await Promise.all([
         firestoreService.getPlayers(),
+        firestoreService.getTransactions(),
         firestoreService.getSettings(),
-        firestoreService.getTransactions()
+        firestoreService.getRounds()
       ]);
 
       console.log('📊 Data loaded:', {
         players: playersData.length,
         transactions: transactionsData.length,
-        timestamp: new Date().toISOString()
+        rounds: roundsData.length
       });
 
-      // DEDUPLICATE PLAYERS by name (in case of duplicates in DB)
-      const uniquePlayers = [];
-      const seenNames = new Set();
+      setPlayers(playersData || []);
+      setTransactions(transactionsData || []);
+      setRounds(roundsData || []);
       
-      for (const player of playersData) {
-        const normalizedName = player.name.toLowerCase().trim();
-        if (!seenNames.has(normalizedName)) {
-          seenNames.add(normalizedName);
-          uniquePlayers.push(player);
-        } else {
-          console.warn('🚨 Duplicate player found and skipped:', player.name, player.id);
-        }
+      if (settingsData) {
+        setSettings(settingsData);
       }
-
-      if (uniquePlayers.length !== playersData.length) {
-        console.warn(`⚠️ Removed ${playersData.length - uniquePlayers.length} duplicate players from display`);
-      }
-
-      setPlayers(uniquePlayers);
-      setSettings(settingsData);
-      setTransactions(transactionsData);
     } catch (error) {
       console.error('❌ Error loading data:', error);
       setError('Erro ao carregar dados. Verifica a tua conexão.');
@@ -76,72 +70,119 @@ const Dashboard = () => {
     }
   };
 
+  // FUNÇÃO CORRIGIDA: Adicionar Jogador
   const addPlayer = async (playerName) => {
+    // Prevenir múltiplas execuções simultâneas
     if (isAddingPlayer) {
       console.warn('⚠️ Already adding a player, ignoring duplicate request');
-      return;
+      return { success: false, error: 'Já está a adicionar um jogador' };
     }
 
     try {
       setIsAddingPlayer(true);
       console.log('➕ Adding player:', playerName);
       
+      // Validação de nome vazio
+      if (!playerName || playerName.trim().length === 0) {
+        alert('❌ O nome do jogador não pode estar vazio!');
+        return { success: false, error: 'Nome vazio' };
+      }
+
+      // Validação de comprimento do nome
+      if (playerName.trim().length < 2) {
+        alert('❌ O nome do jogador deve ter pelo menos 2 caracteres!');
+        return { success: false, error: 'Nome muito curto' };
+      }
+
+      // Validação de duplicados (case-insensitive e com trim)
+      const normalizedName = playerName.trim().toLowerCase();
       const existingPlayer = players.find(p => 
-        p.name.toLowerCase().trim() === playerName.toLowerCase().trim()
+        p.name.toLowerCase().trim() === normalizedName
       );
       
       if (existingPlayer) {
-        alert(`❌ Jogador "${playerName}" já existe na liga!`);
-        return;
+        alert(`❌ Jogador "${playerName.trim()}" já existe na liga!`);
+        return { success: false, error: 'Jogador duplicado' };
       }
 
-      const uniqueId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Gerar ID único mais robusto
+      const timestamp = Date.now();
+      const randomStr = Math.random().toString(36).substr(2, 9);
+      const uniqueId = `player_${timestamp}_${randomStr}`;
       
+      // Criar novo jogador
       const newPlayer = {
         id: uniqueId,
         name: playerName.trim(),
-        balance: -settings.entryFee,
+        balance: -settings.entryFee,  // Começa com dívida da quota de entrada
         paid: false,
         totalPoints: 0,
         totalRounds: 0,
         rounds: [],
         createdAt: new Date().toISOString(),
-        createdBy: user?.uid
+        createdBy: user?.uid || 'anonymous',
+        lastUpdated: new Date().toISOString()
       };
 
-      console.log('💾 Saving new player with unique ID:', uniqueId);
+      console.log('💾 Saving new player:', newPlayer);
+      
+      // Salvar no Firebase
       const saveResult = await firestoreService.savePlayer(newPlayer);
       if (!saveResult.success) {
         throw new Error(saveResult.error || 'Failed to save player');
       }
 
       console.log('💸 Adding entry fee transaction...');
-      await firestoreService.addTransaction({
+      
+      // Adicionar transação de quota de entrada
+      const transactionResult = await firestoreService.addTransaction({
         playerId: uniqueId,
         playerName: newPlayer.name,
         type: 'debt',
         amount: settings.entryFee,
-        note: 'Quota de entrada da liga',
-        balanceAfter: -settings.entryFee
+        note: `Quota de entrada da liga (${settings.entryFee}€)`,
+        balanceAfter: -settings.entryFee,
+        timestamp: new Date().toISOString(),
+        createdBy: user?.uid || 'anonymous'
       });
+
+      if (!transactionResult.success) {
+        console.error('⚠️ Failed to create transaction:', transactionResult.error);
+      }
 
       console.log('🔄 Reloading data after player addition...');
       await loadData();
       
+      // Notificação de sucesso
+      alert(`✅ ${newPlayer.name} foi adicionado à liga com sucesso!\n💰 Quota de entrada: ${settings.entryFee}€`);
+      
       console.log('✅ Player added successfully');
+      return { success: true, player: newPlayer };
       
     } catch (error) {
       console.error('❌ Error adding player:', error);
       setError('Erro ao adicionar jogador: ' + error.message);
+      alert(`❌ Erro ao adicionar jogador: ${error.message}`);
+      return { success: false, error: error.message };
     } finally {
       setIsAddingPlayer(false);
     }
   };
 
+  // FUNÇÃO CORRIGIDA: Atualizar Jogador
   const updatePlayer = async (updatedPlayer) => {
     try {
       console.log('🔄 Updating player:', updatedPlayer);
       
+      // Validação básica
+      if (!updatedPlayer || !updatedPlayer.id) {
+        throw new Error('Dados do jogador inválidos');
+      }
+
+      // Adicionar timestamp de última atualização
+      updatedPlayer.lastUpdated = new Date().toISOString();
+      
+      // Salvar no Firebase
       const saveResult = await firestoreService.savePlayer(updatedPlayer);
       if (!saveResult.success) {
         throw new Error(saveResult.error || 'Failed to update player');
@@ -149,64 +190,78 @@ const Dashboard = () => {
 
       console.log('✅ Player saved to database');
 
+      // Atualizar estado local
       setPlayers(prevPlayers => 
         prevPlayers.map(p => 
           p.id === updatedPlayer.id ? updatedPlayer : p
         )
       );
       
+      // Fechar perfil se estava aberto
       if (viewingProfile && viewingProfile.id === updatedPlayer.id) {
         setViewingProfile(null);
       }
       
       console.log('✅ UI updated successfully');
+      return { success: true };
       
     } catch (error) {
       console.error('❌ Error updating player:', error);
       setError('Erro ao atualizar jogador: ' + error.message);
-      await loadData();
+      await loadData(); // Recarregar dados em caso de erro
+      return { success: false, error: error.message };
     }
   };
 
+  // FUNÇÃO CORRIGIDA: Remover Jogador
   const removePlayer = async (playerId) => {
     try {
-      console.log('🗑️ Removing player with ID:', playerId, 'Type:', typeof playerId);
+      console.log('🗑️ Removing player with ID:', playerId);
       
+      // Converter ID para string e procurar jogador
       const playerIdString = String(playerId);
-      
       const player = players.find(p => String(p.id) === playerIdString);
+      
       if (!player) {
         console.error('Player not found with ID:', playerId);
-        console.log('Available players:', players.map(p => ({ id: p.id, name: p.name })));
-        alert('Jogador não encontrado!');
-        return;
+        alert('❌ Jogador não encontrado!');
+        return { success: false, error: 'Jogador não encontrado' };
       }
 
+      // Confirmação com detalhes
       const confirmDelete = window.confirm(
-        `Tens a certeza que queres eliminar ${player.name}?\n\n` +
+        `⚠️ ATENÇÃO: Vais eliminar ${player.name}\n\n` +
+        `Dados do jogador:\n` +
+        `• Saldo atual: ${player.balance.toFixed(2)}€\n` +
+        `• Total de pontos: ${player.totalPoints || 0}\n` +
+        `• Rondas jogadas: ${player.totalRounds || 0}\n\n` +
         `Esta ação irá:\n` +
         `• Eliminar permanentemente o jogador\n` +
         `• Remover todos os seus dados\n` +
-        `• Esta ação NÃO pode ser desfeita\n\n` +
+        `• Manter o histórico de transações\n\n` +
+        `⚠️ Esta ação NÃO pode ser desfeita!\n\n` +
         `Confirmar eliminação?`
       );
       
       if (!confirmDelete) {
-        return;
+        return { success: false, error: 'Cancelado pelo utilizador' };
       }
 
       console.log('🗑️ Deleting player from database...');
       
+      // Registrar a remoção no histórico
       await firestoreService.addTransaction({
         playerId: playerIdString,
         playerName: player.name,
         type: 'removal',
         amount: 0,
-        note: 'Jogador removido da liga',
+        note: `Jogador removido da liga (Saldo final: ${player.balance.toFixed(2)}€)`,
         balanceAfter: 0,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        createdBy: user?.uid || 'anonymous'
       });
 
+      // Eliminar jogador do Firebase
       const deleteResult = await firestoreService.deletePlayer(playerIdString);
       
       if (!deleteResult.success) {
@@ -215,29 +270,37 @@ const Dashboard = () => {
 
       console.log('✅ Player removed successfully');
       
+      // Recarregar dados
       await loadData();
       
+      // Notificação de sucesso
       alert(`✅ ${player.name} foi removido da liga com sucesso!`);
+      
+      return { success: true };
       
     } catch (error) {
       console.error('❌ Error removing player:', error);
-      alert('Erro ao remover jogador: ' + error.message);
+      alert(`❌ Erro ao remover jogador: ${error.message}`);
+      return { success: false, error: error.message };
     }
   };
 
+  // FUNÇÃO: Remover Todos os Jogadores
   const removeAllPlayers = async () => {
     try {
       if (players.length === 0) {
-        alert('Não há jogadores para eliminar!');
+        alert('❌ Não há jogadores para eliminar!');
         return;
       }
 
+      // Primeira confirmação
       const confirmDelete = window.confirm(
         `⚠️ ATENÇÃO: Vais eliminar TODOS os ${players.length} jogadores!\n\n` +
         `Esta ação irá:\n` +
         `• Eliminar todos os jogadores da liga\n` +
-        `• Manter o histórico de transações\n` +
-        `• Esta ação NÃO pode ser desfeita\n\n` +
+        `• Apagar todos os dados de jogadores\n` +
+        `• Manter apenas o histórico de transações\n\n` +
+        `⚠️ Esta ação NÃO pode ser desfeita!\n\n` +
         `Tens a certeza que queres continuar?`
       );
       
@@ -245,296 +308,228 @@ const Dashboard = () => {
         return;
       }
 
+      // Segunda confirmação
       const doubleConfirm = window.confirm(
         `🚨 ÚLTIMA CONFIRMAÇÃO\n\n` +
         `Vais eliminar ${players.length} jogadores permanentemente.\n\n` +
-        `Escreve "ELIMINAR TODOS" para confirmar (sem aspas)`
+        `Esta é a tua última oportunidade de cancelar.\n\n` +
+        `Confirmar eliminação de TODOS os jogadores?`
       );
 
       if (!doubleConfirm) {
         return;
       }
 
-      const userInput = prompt('Escreve "ELIMINAR TODOS" para confirmar:');
+      // Terceira confirmação com input
+      const userInput = prompt(
+        `Para confirmar a eliminação de ${players.length} jogadores,\n` +
+        `escreve "ELIMINAR TODOS" (sem aspas):`
+      );
+      
       if (userInput !== 'ELIMINAR TODOS') {
-        alert('Operação cancelada. Texto não corresponde.');
+        alert('❌ Operação cancelada. Texto não corresponde.');
         return;
       }
 
-      console.log('🗑️ Starting bulk player deletion...');
-      setError(null);
+      console.log('🗑️ Removing all players...');
 
-      let deletedCount = 0;
-      const totalPlayers = players.length;
+      // Registrar remoção em massa no histórico
+      await firestoreService.addTransaction({
+        playerId: 'bulk_removal',
+        playerName: 'Todos os Jogadores',
+        type: 'removal',
+        amount: 0,
+        note: `Remoção em massa de ${players.length} jogadores`,
+        timestamp: new Date().toISOString(),
+        createdBy: user?.uid || 'anonymous'
+      });
 
+      // Eliminar cada jogador
       for (const player of players) {
-        try {
-          console.log(`🗑️ Deleting player ${deletedCount + 1}/${totalPlayers}: ${player.name}`);
-          
-          const deleteResult = await firestoreService.deletePlayer(String(player.id));
-          if (deleteResult.success) {
-            await firestoreService.addTransaction({
-              playerId: String(player.id),
-              playerName: player.name,
-              type: 'bulk_removal',
-              amount: 0,
-              note: 'Jogador removido - limpeza em massa',
-              balanceAfter: 0
-            });
-            
-            deletedCount++;
-          } else {
-            console.error(`Failed to delete ${player.name}:`, deleteResult.error);
-          }
-        } catch (playerError) {
-          console.error(`Error deleting ${player.name}:`, playerError);
-        }
+        await firestoreService.deletePlayer(player.id);
       }
 
-      console.log(`✅ Bulk deletion completed: ${deletedCount}/${totalPlayers} deleted`);
+      console.log('✅ All players removed successfully');
       
+      // Limpar estado e recarregar
+      setPlayers([]);
       await loadData();
       
-      alert(`🎉 Eliminação concluída!\n\n${deletedCount} de ${totalPlayers} jogadores foram eliminados com sucesso.`);
+      alert(`✅ ${players.length} jogadores foram removidos com sucesso!`);
       
     } catch (error) {
-      console.error('❌ Error in bulk deletion:', error);
-      setError('Erro na eliminação em massa: ' + error.message);
+      console.error('❌ Error removing all players:', error);
+      alert(`❌ Erro ao remover jogadores: ${error.message}`);
     }
   };
 
+  // FUNÇÃO: Limpar Jogadores Duplicados
   const cleanDuplicatePlayers = async () => {
     try {
-      console.log('🧹 Starting duplicate cleanup...');
+      console.log('🧹 Checking for duplicate players...');
       
-      const allPlayers = await firestoreService.getPlayers();
-      console.log('📊 Total players in DB:', allPlayers.length);
+      const uniquePlayers = {};
+      const duplicates = [];
       
-      const duplicateGroups = {};
-      allPlayers.forEach(player => {
+      // Identificar duplicados
+      players.forEach(player => {
         const normalizedName = player.name.toLowerCase().trim();
-        if (!duplicateGroups[normalizedName]) {
-          duplicateGroups[normalizedName] = [];
+        if (uniquePlayers[normalizedName]) {
+          // Manter o jogador mais antigo
+          const existing = uniquePlayers[normalizedName];
+          if (new Date(player.createdAt) < new Date(existing.createdAt)) {
+            duplicates.push(existing);
+            uniquePlayers[normalizedName] = player;
+          } else {
+            duplicates.push(player);
+          }
+        } else {
+          uniquePlayers[normalizedName] = player;
         }
-        duplicateGroups[normalizedName].push(player);
       });
-      
-      const duplicates = Object.values(duplicateGroups).filter(group => group.length > 1);
       
       if (duplicates.length === 0) {
         alert('✅ Não foram encontrados jogadores duplicados!');
         return;
       }
       
-      let totalDuplicates = 0;
-      duplicates.forEach(group => totalDuplicates += group.length - 1);
-      
       const confirmClean = window.confirm(
-        `🧹 Encontrados jogadores duplicados!\n\n` +
-        `Grupos duplicados: ${duplicates.length}\n` +
-        `Jogadores a eliminar: ${totalDuplicates}\n\n` +
-        `Para cada nome, será mantido o jogador mais recente.\n\n` +
-        `Queres continuar?`
+        `🔍 Encontrados ${duplicates.length} jogadores duplicados:\n\n` +
+        duplicates.map(p => `• ${p.name} (Saldo: ${p.balance.toFixed(2)}€)`).join('\n') +
+        `\n\nRemover duplicados? (Será mantido o mais antigo de cada)`
       );
       
-      if (!confirmClean) return;
+      if (!confirmClean) {
+        return;
+      }
       
-      let cleanedCount = 0;
-      
-      for (const group of duplicates) {
-        group.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-        
-        const keepPlayer = group[0];
-        const deleteList = group.slice(1);
-        
-        console.log(`🧹 Keeping: ${keepPlayer.name} (${keepPlayer.id})`);
-        console.log(`🗑️ Deleting ${deleteList.length} duplicates...`);
-        
-        for (const duplicatePlayer of deleteList) {
-          try {
-            const deleteResult = await firestoreService.deletePlayer(String(duplicatePlayer.id));
-            if (deleteResult.success) {
-              await firestoreService.addTransaction({
-                playerId: String(duplicatePlayer.id),
-                playerName: duplicatePlayer.name,
-                type: 'duplicate_cleanup',
-                amount: 0,
-                note: 'Jogador duplicado removido - limpeza automática',
-                balanceAfter: 0
-              });
-              cleanedCount++;
-              console.log(`✅ Deleted duplicate: ${duplicatePlayer.name} (${duplicatePlayer.id})`);
-            }
-          } catch (cleanError) {
-            console.error(`❌ Failed to delete duplicate ${duplicatePlayer.name}:`, cleanError);
-          }
-        }
+      // Remover duplicados
+      for (const duplicate of duplicates) {
+        await firestoreService.deletePlayer(duplicate.id);
       }
       
       await loadData();
-      
-      alert(`🎉 Limpeza concluída!\n\n${cleanedCount} jogadores duplicados foram removidos.`);
+      alert(`✅ ${duplicates.length} jogadores duplicados foram removidos!`);
       
     } catch (error) {
       console.error('❌ Error cleaning duplicates:', error);
-      setError('Erro na limpeza de duplicados: ' + error.message);
+      alert(`❌ Erro ao limpar duplicados: ${error.message}`);
     }
   };
 
+  // FUNÇÃO: Toggle Status de Pagamento
   const togglePaidStatus = async (playerId) => {
     try {
       const player = players.find(p => p.id === playerId);
-      if (!player) {
-        console.warn('Player not found:', playerId);
-        return;
-      }
-
-      const updatedPlayer = { ...player, paid: !player.paid };
+      if (!player) return;
       
-      const saveResult = await firestoreService.savePlayer(updatedPlayer);
-      if (!saveResult.success) {
-        throw new Error(saveResult.error || 'Failed to update player status');
-      }
-
-      await firestoreService.addTransaction({
-        playerId: player.id,
-        playerName: player.name,
-        type: 'status_change',
-        amount: 0,
-        note: `Status alterado para: ${!player.paid ? 'Pago' : 'Pendente'}`,
-        balanceAfter: player.balance
-      });
-
-      await loadData();
+      const updatedPlayer = {
+        ...player,
+        paid: !player.paid,
+        lastUpdated: new Date().toISOString()
+      };
+      
+      await updatePlayer(updatedPlayer);
       
     } catch (error) {
       console.error('❌ Error toggling paid status:', error);
-      setError('Erro ao alterar status: ' + error.message);
     }
   };
 
-  const handleSettingsChange = async (newSettings) => {
-    try {
-      const saveResult = await firestoreService.saveSettings(newSettings);
-      if (!saveResult.success) {
-        throw new Error(saveResult.error || 'Failed to save settings');
-      }
-
-      setSettings(newSettings);
-    } catch (error) {
-      console.error('❌ Error saving settings:', error);
-      setError('Erro ao guardar configurações: ' + error.message);
-    }
-  };
-
-  const getTotalPot = () => {
-    return players.reduce((total, player) => {
-      return total + (player.balance > 0 ? player.balance : 0);
-    }, 0);
-  };
-
+  // Verificar estado de carregamento
   if (loading) {
-    return <Loading message="A carregar dados da liga..." />;
-  }
-
-  if (viewingProfile) {
     return (
-      <PlayerProfile
-        player={viewingProfile}
-        onBack={() => setViewingProfile(null)}
-        onUpdatePlayer={updatePlayer}
-        transactions={transactions}
-        totalPot={getTotalPot()}
-        settings={settings}
-      />
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">A carregar dados...</p>
+        </div>
+      </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 via-blue-50 to-green-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        
-        {/* Header */}
-        <div className="pt-8 pb-6">
-          <Header settings={settings} onSettingsChange={handleSettingsChange} />
-        </div>
-        
-        {/* Navigation Tabs - VERSÃO CORRIGIDA */}
-        <div className="bg-white rounded-xl shadow-lg mb-8 overflow-hidden">
-          <div className="flex border-b border-gray-100">
+    <div className="min-h-screen bg-gray-50">
+      <Header onLogout={logout} user={user} />
+      
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Error Alert */}
+        {error && (
+          <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+            <span className="block sm:inline">{error}</span>
             <button
-              onClick={() => setCurrentView('dashboard')}
-              className={`flex-1 px-6 py-4 font-semibold transition-all duration-200 ${
-                currentView === 'dashboard'
-                  ? 'text-green-600 bg-green-50 border-b-3 border-green-600'
-                  : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
-              }`}
+              onClick={() => setError(null)}
+              className="absolute top-0 bottom-0 right-0 px-4 py-3"
             >
-              <div className="flex items-center justify-center space-x-2">
-                <span className="text-xl">📊</span>
-                <span>Dashboard Geral</span>
-              </div>
-            </button>
-            
-            <button
-              onClick={() => setCurrentView('rounds')}
-              className={`flex-1 px-6 py-4 font-semibold transition-all duration-200 ${
-                currentView === 'rounds'
-                  ? 'text-green-600 bg-green-50 border-b-3 border-green-600'
-                  : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
-              }`}
-            >
-              <div className="flex items-center justify-center space-x-2">
-                <span className="text-xl">⚽</span>
-                <span>Rondas Semanais</span>
-              </div>
-            </button>
-            
-            {/* BOTÃO RELATÓRIOS FINANCEIROS */}
-            <button
-              onClick={() => setCurrentView('financial')}
-              className={`flex-1 px-6 py-4 font-semibold transition-all duration-200 ${
-                currentView === 'financial'
-                  ? 'text-purple-600 bg-purple-50 border-b-3 border-purple-600'
-                  : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
-              }`}
-            >
-              <div className="flex items-center justify-center space-x-2">
-                <span className="text-xl">💰</span>
-                <span>Relatórios Financeiros</span>
-              </div>
+              <span className="text-red-500">×</span>
             </button>
           </div>
+        )}
+
+        {/* Navigation Tabs */}
+        <div className="mb-6 border-b border-gray-200">
+          <nav className="-mb-px flex space-x-8">
+            <button
+              onClick={() => setCurrentView('dashboard')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                currentView === 'dashboard'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              📊 Dashboard
+            </button>
+            <button
+              onClick={() => setCurrentView('rounds')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                currentView === 'rounds'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              ⚽ Rondas
+            </button>
+            <button
+              onClick={() => setCurrentView('financial')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                currentView === 'financial'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              💰 Finanças
+            </button>
+          </nav>
         </div>
-        
-        {/* Error Message */}
-        {error && (
-          <div className="bg-red-50 border-l-4 border-red-500 rounded-lg p-6 mb-8 shadow-md">
-            <div className="flex justify-between items-start">
-              <div className="flex items-start">
-                <div className="text-red-500 mr-3">
-                  <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="text-red-800 font-semibold">Erro</h3>
-                  <p className="text-red-700">{error}</p>
-                </div>
+
+        {/* Profile View */}
+        {viewingProfile && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+              <div className="sticky top-0 bg-white border-b p-4 flex justify-between items-center">
+                <h2 className="text-xl font-semibold">Perfil do Jogador</h2>
+                <button
+                  onClick={() => setViewingProfile(null)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
               </div>
-              <button
-                onClick={() => setError(null)}
-                className="text-red-400 hover:text-red-600 transition-colors"
-              >
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
+              <div className="p-4">
+                <PlayerProfile
+                  player={viewingProfile}
+                  onBack={() => setViewingProfile(null)}
+                  onUpdatePlayer={updatePlayer}
+                  transactions={transactions}
+                  totalPot={players.reduce((sum, p) => sum + Math.max(0, -p.balance), 0)}
+                  settings={settings}
+                />
+              </div>
             </div>
           </div>
         )}
 
-        {/* Content */}
+        {/* Main Content */}
         <div className="pb-8">
           {currentView === 'dashboard' && (
             <div className="space-y-8">
@@ -560,30 +555,25 @@ const Dashboard = () => {
           {currentView === 'rounds' && (
             <div className="bg-white rounded-xl shadow-lg overflow-hidden">
               <div className="bg-gradient-to-r from-blue-600 to-green-600 px-6 py-4">
-                <h2 className="text-xl font-bold text-white flex items-center">
-                  <span className="mr-3">⚽</span>
-                  Gestão de Rondas Semanais
+                <h2 className="text-xl font-bold text-white">
+                  ⚽ Gestão de Rondas Semanais
                 </h2>
               </div>
               <div className="p-6">
                 <RoundsManager
                   players={players}
-                  onUpdatePlayers={(updatedPlayers) => {
-                    loadData();
-                  }}
+                  onUpdatePlayers={() => loadData()}
                   settings={settings}
                 />
               </div>
             </div>
           )}
 
-          {/* VIEW RELATÓRIOS FINANCEIROS */}
           {currentView === 'financial' && (
             <div className="bg-white rounded-xl shadow-lg overflow-hidden">
               <div className="bg-gradient-to-r from-purple-600 to-pink-600 px-6 py-4">
-                <h2 className="text-xl font-bold text-white flex items-center">
-                  <span className="mr-3">💰</span>
-                  Relatórios Financeiros e Gestão de Pagamentos
+                <h2 className="text-xl font-bold text-white">
+                  💰 Relatórios Financeiros e Gestão de Pagamentos
                 </h2>
               </div>
               <div className="p-6">
