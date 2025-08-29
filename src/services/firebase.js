@@ -1,4 +1,4 @@
-// src/services/firebase.js - VERSÃO COMPLETA CORRIGIDA
+// src/services/firebase.js 
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -19,10 +19,12 @@ import {
   where,
   deleteDoc,
   updateDoc,
-  getDoc
+  getDoc,
+  orderBy,
+  limit
 } from 'firebase/firestore';
 
-// Substitui com as tuas configurações do Firebase Console
+// Configurações do Firebase (usar variáveis de ambiente)
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
   authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
@@ -42,13 +44,16 @@ const getCurrentUserId = () => {
   return auth.currentUser?.uid || null;
 };
 
-// Auth functions
+// =====================================
+// AUTH SERVICE
+// =====================================
 export const authService = {
   async signIn(email, password) {
     try {
       const result = await signInWithEmailAndPassword(auth, email, password);
       return { success: true, user: result.user };
     } catch (error) {
+      console.error('❌ Sign in error:', error);
       return { success: false, error: error.message };
     }
   },
@@ -63,6 +68,7 @@ export const authService = {
       
       return { success: true, user: result.user };
     } catch (error) {
+      console.error('❌ Sign up error:', error);
       return { success: false, error: error.message };
     }
   },
@@ -72,19 +78,26 @@ export const authService = {
       await signOut(auth);
       return { success: true };
     } catch (error) {
+      console.error('❌ Sign out error:', error);
       return { success: false, error: error.message };
     }
   },
 
   onAuthStateChanged(callback) {
     return onAuthStateChanged(auth, callback);
+  },
+
+  getCurrentUser() {
+    return auth.currentUser;
   }
 };
 
-// Firestore functions
+// =====================================
+// FIRESTORE SERVICE
+// =====================================
 export const firestoreService = {
   
-  // PLAYERS
+  // ========== PLAYERS ==========
   async getPlayers() {
     try {
       const userId = getCurrentUserId();
@@ -98,13 +111,13 @@ export const firestoreService = {
       
       console.log('📊 Total players in DB:', players.length);
       
-      // Filtrar por userId manualmente SE estiver autenticado
+      // Filtrar por userId se estiver autenticado
       if (userId) {
         players = players.filter(player => player.userId === userId);
         console.log('📊 Players for user:', players.length);
       }
       
-      // Ordenar manualmente por data de criação
+      // Ordenar por data de criação (mais recente primeiro)
       players.sort((a, b) => {
         const dateA = new Date(a.createdAt || 0);
         const dateB = new Date(b.createdAt || 0);
@@ -116,6 +129,35 @@ export const firestoreService = {
     } catch (error) {
       console.error('❌ Error getting players:', error);
       return [];
+    }
+  },
+
+  async getPlayerById(playerId) {
+    try {
+      console.log('🔍 Getting player by ID:', playerId);
+      
+      if (!playerId) {
+        console.error('❌ No playerId provided');
+        return null;
+      }
+      
+      const playerRef = doc(db, 'players', playerId);
+      const playerDoc = await getDoc(playerRef);
+      
+      if (playerDoc.exists()) {
+        const playerData = { 
+          id: playerDoc.id, 
+          ...playerDoc.data() 
+        };
+        console.log('📊 Player found:', playerData);
+        return playerData;
+      } else {
+        console.log('⚠️ Player not found with ID:', playerId);
+        return null;
+      }
+    } catch (error) {
+      console.error('❌ Error getting player by ID:', error);
+      return null;
     }
   },
 
@@ -138,18 +180,39 @@ export const firestoreService = {
       if (player.id && !player.id.startsWith('temp_')) {
         console.log('🔄 Updating existing player');
         const playerRef = doc(db, 'players', player.id);
+        
+        // Verificar se existe antes de atualizar
+        const playerDoc = await getDoc(playerRef);
+        if (!playerDoc.exists()) {
+          console.error('❌ Player not found for update:', player.id);
+          // Se não existe, criar em vez de falhar
+          console.log('📝 Creating player instead of updating');
+          if (!playerData.createdAt) {
+            playerData.createdAt = new Date().toISOString();
+          }
+          await setDoc(playerRef, playerData);
+          console.log('✅ Player created with ID:', player.id);
+          return { success: true, id: player.id };
+        }
+        
         await updateDoc(playerRef, playerData);
         console.log('✅ Player updated');
         return { success: true, id: player.id };
       } else {
-        // É criação - se tem ID específico, usar setDoc
+        // É criação
         console.log('➕ Creating new player');
         if (!playerData.createdAt) {
           playerData.createdAt = new Date().toISOString();
         }
         
+        // Garantir campos obrigatórios
+        playerData.balance = playerData.balance || 0;
+        playerData.rounds = playerData.rounds || [];
+        playerData.totalPoints = playerData.totalPoints || 0;
+        playerData.totalRounds = playerData.totalRounds || 0;
+        
+        // Se tem ID específico (não temporário), usar setDoc
         if (player.id && player.id.startsWith('player_')) {
-          // Usar o ID específico
           console.log('💾 Creating player with specific ID:', player.id);
           const playerRef = doc(db, 'players', player.id);
           await setDoc(playerRef, playerData);
@@ -164,6 +227,43 @@ export const firestoreService = {
       }
     } catch (error) {
       console.error('❌ Error saving player:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  // Método alternativo para compatibilidade
+  async addPlayer(player) {
+    return this.savePlayer(player);
+  },
+
+  async updatePlayer(playerId, updates) {
+    try {
+      console.log('🔄 Updating player:', playerId);
+      
+      if (!playerId) {
+        throw new Error('Player ID is required');
+      }
+      
+      const playerRef = doc(db, 'players', playerId);
+      
+      // Verificar se existe
+      const playerDoc = await getDoc(playerRef);
+      if (!playerDoc.exists()) {
+        console.error('❌ Player not found:', playerId);
+        return { success: false, error: 'Player not found' };
+      }
+      
+      const updateData = {
+        ...updates,
+        updatedAt: new Date().toISOString()
+      };
+      
+      await updateDoc(playerRef, updateData);
+      console.log('✅ Player updated successfully');
+      
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Error updating player:', error);
       return { success: false, error: error.message };
     }
   },
@@ -194,14 +294,191 @@ export const firestoreService = {
       
     } catch (error) {
       console.error('❌ Error deleting player:', error);
-      console.error('Error code:', error.code);
-      console.error('Error message:', error.message);
-      
       return { success: false, error: error.message };
     }
   },
 
-  // SETTINGS
+  // ========== ROUNDS ==========
+  async getRounds() {
+    try {
+      const userId = getCurrentUserId();
+      console.log('🎯 Getting rounds for user:', userId);
+      
+      const snapshot = await getDocs(collection(db, 'rounds'));
+      let rounds = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      console.log('📊 Total rounds in DB:', rounds.length);
+      
+      // Filtrar por userId se existir
+      if (userId) {
+        rounds = rounds.filter(r => r.userId === userId);
+        console.log('📊 Rounds for user:', rounds.length);
+      }
+      
+      // Ordenar por data de criação (mais recente primeiro)
+      rounds.sort((a, b) => {
+        const dateA = new Date(a.createdAt || 0);
+        const dateB = new Date(b.createdAt || 0);
+        return dateB - dateA;
+      });
+      
+      console.log('✅ Final rounds list:', rounds.length);
+      return rounds;
+    } catch (error) {
+      console.error('❌ Error getting rounds:', error);
+      return [];
+    }
+  },
+
+  async getRoundById(roundId) {
+    try {
+      console.log('🔍 Getting round by ID:', roundId);
+      
+      if (!roundId) {
+        console.error('❌ No roundId provided');
+        return null;
+      }
+      
+      const roundRef = doc(db, 'rounds', roundId);
+      const roundDoc = await getDoc(roundRef);
+      
+      if (roundDoc.exists()) {
+        const roundData = { 
+          id: roundDoc.id, 
+          ...roundDoc.data() 
+        };
+        console.log('📊 Round found:', roundData);
+        return roundData;
+      } else {
+        console.log('⚠️ Round not found with ID:', roundId);
+        return null;
+      }
+    } catch (error) {
+      console.error('❌ Error getting round by ID:', error);
+      return null;
+    }
+  },
+
+  async getCurrentRound() {
+    try {
+      const userId = getCurrentUserId();
+      console.log('🎯 Getting current round for user:', userId);
+      
+      const rounds = await this.getRounds();
+      
+      // Filtrar rondas ativas
+      const activeRounds = rounds.filter(r => r.status === 'active');
+      
+      // Retornar a mais recente
+      const currentRound = activeRounds.length > 0 ? activeRounds[0] : null;
+      console.log('📊 Current round:', currentRound);
+      
+      return currentRound;
+    } catch (error) {
+      console.error('❌ Error getting current round:', error);
+      return null;
+    }
+  },
+
+  async addRound(round) {
+    try {
+      const userId = getCurrentUserId();
+      console.log('🎯 Adding round for user:', userId);
+      
+      const roundData = {
+        ...round,
+        timestamp: new Date().toISOString(),
+        createdAt: round.createdAt || new Date().toISOString(),
+        userId: userId || 'anonymous',
+        createdBy: round.createdBy || userId || 'anonymous'
+      };
+      
+      // CRÍTICO: Se a ronda tem um ID específico, usar setDoc
+      if (round.id) {
+        console.log('💾 Creating round with specific ID:', round.id);
+        const roundRef = doc(db, 'rounds', round.id);
+        await setDoc(roundRef, roundData);
+        console.log('✅ Round added with ID:', round.id);
+        return { success: true, id: round.id };
+      } else {
+        // Se não tem ID, usar addDoc (gera ID automático)
+        const docRef = await addDoc(collection(db, 'rounds'), roundData);
+        console.log('✅ Round added with auto ID:', docRef.id);
+        return { success: true, id: docRef.id };
+      }
+    } catch (error) {
+      console.error('❌ Error adding round:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async updateRound(roundId, updates) {
+    try {
+      console.log('🔄 Updating round:', roundId, 'with updates:', updates);
+      
+      if (!roundId) {
+        console.error('❌ No roundId provided');
+        return { success: false, error: 'No round ID provided' };
+      }
+      
+      const roundRef = doc(db, 'rounds', roundId);
+      
+      // Verificar se existe primeiro
+      const roundDoc = await getDoc(roundRef);
+      if (!roundDoc.exists()) {
+        console.error('❌ Round does not exist:', roundId);
+        return { success: false, error: 'Round not found', code: 'ROUND_NOT_FOUND' };
+      }
+      
+      // Adicionar timestamp de atualização
+      const updateData = {
+        ...updates,
+        updatedAt: new Date().toISOString()
+      };
+      
+      await updateDoc(roundRef, updateData);
+      console.log('✅ Round updated successfully');
+      
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Error updating round:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async deleteRound(roundId) {
+    try {
+      console.log('🗑️ Attempting to delete round with ID:', roundId);
+      
+      if (!roundId) {
+        console.error('❌ No roundId provided');
+        return { success: false, error: 'No round ID provided' };
+      }
+      
+      // Verificar se o documento existe primeiro
+      const roundRef = doc(db, 'rounds', roundId);
+      const roundDoc = await getDoc(roundRef);
+      
+      if (!roundDoc.exists()) {
+        console.error('❌ Round document does not exist:', roundId);
+        return { success: false, error: 'Round not found in database' };
+      }
+      
+      console.log('📄 Round exists, proceeding with deletion...');
+      await deleteDoc(roundRef);
+      console.log('✅ Round deleted successfully');
+      
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Error deleting round:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  // ========== SETTINGS ==========
   async getSettings() {
     try {
       const userId = getCurrentUserId();
@@ -220,7 +497,7 @@ export const firestoreService = {
       }
       
       // Fallback para configurações globais
-      const globalSettings = allSettings.find(s => !s.userId) || allSettings[0];
+      const globalSettings = allSettings.find(s => !s.userId || s.id === 'global') || allSettings[0];
       if (globalSettings) {
         console.log('📊 Global settings found:', globalSettings);
         return globalSettings;
@@ -279,32 +556,7 @@ export const firestoreService = {
     }
   },
 
-  // TRANSACTIONS
-  async addTransaction(transaction) {
-    try {
-      const userId = getCurrentUserId();
-      console.log('💸 Adding transaction for user:', userId);
-      
-      const transactionData = {
-        ...transaction,
-        timestamp: transaction.timestamp || new Date().toISOString(),
-        createdAt: new Date().toISOString()
-      };
-      
-      if (userId) {
-        transactionData.userId = userId;
-        transactionData.createdBy = transaction.createdBy || userId;
-      }
-      
-      await addDoc(collection(db, 'transactions'), transactionData);
-      console.log('✅ Transaction added');
-      return { success: true };
-    } catch (error) {
-      console.error('❌ Error adding transaction:', error);
-      return { success: false, error: error.message };
-    }
-  },
-
+  // ========== TRANSACTIONS ==========
   async getTransactions() {
     try {
       const userId = getCurrentUserId();
@@ -318,13 +570,13 @@ export const firestoreService = {
       
       console.log('📊 Total transactions in DB:', transactions.length);
       
-      // Filtrar por userId manualmente
+      // Filtrar por userId se existir
       if (userId) {
         transactions = transactions.filter(t => t.userId === userId);
         console.log('📊 Transactions for user:', transactions.length);
       }
       
-      // Ordenar manualmente por timestamp
+      // Ordenar por timestamp (mais recente primeiro)
       transactions.sort((a, b) => {
         const dateA = new Date(a.timestamp || a.createdAt || 0);
         const dateB = new Date(b.timestamp || b.createdAt || 0);
@@ -339,198 +591,133 @@ export const firestoreService = {
     }
   },
 
-  // ROUNDS
-  async getRounds() {
+  async addTransaction(transaction) {
     try {
       const userId = getCurrentUserId();
-      console.log('🎯 Getting rounds for user:', userId);
+      console.log('💸 Adding transaction for user:', userId);
       
-      const snapshot = await getDocs(collection(db, 'rounds'));
-      let rounds = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
-      console.log('📊 Total rounds in DB:', rounds.length);
-      
-      // Filtrar por userId manualmente
-      if (userId) {
-        rounds = rounds.filter(r => r.userId === userId);
-        console.log('📊 Rounds for user:', rounds.length);
-      }
-      
-      // Ordenar manualmente por data de criação
-      rounds.sort((a, b) => {
-        const dateA = new Date(a.createdAt || 0);
-        const dateB = new Date(b.createdAt || 0);
-        return dateB - dateA;
-      });
-      
-      console.log('✅ Final rounds list:', rounds.length);
-      return rounds;
-    } catch (error) {
-      console.error('❌ Error getting rounds:', error);
-      return [];
-    }
-  },
-
-  async addRound(round) {
-    try {
-      const userId = getCurrentUserId();
-      console.log('🎯 Adding round for user:', userId);
-      
-      const roundData = {
-        ...round,
-        timestamp: new Date().toISOString(),
-        createdAt: round.createdAt || new Date().toISOString()
+      const transactionData = {
+        ...transaction,
+        timestamp: transaction.timestamp || new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        userId: userId || 'anonymous',
+        createdBy: transaction.createdBy || userId || 'anonymous'
       };
       
-      if (userId) {
-        roundData.userId = userId;
-        roundData.createdBy = round.createdBy || userId;
-      }
+      const docRef = await addDoc(collection(db, 'transactions'), transactionData);
+      console.log('✅ Transaction added with ID:', docRef.id);
       
-      // CORREÇÃO CRÍTICA: Se a ronda tem um ID específico, usar setDoc
-      if (round.id) {
-        console.log('💾 Creating round with specific ID:', round.id);
-        const roundRef = doc(db, 'rounds', round.id);
-        await setDoc(roundRef, roundData);
-        console.log('✅ Round added with ID:', round.id);
-      } else {
-        // Se não tem ID, usar addDoc (gera ID automático)
-        const docRef = await addDoc(collection(db, 'rounds'), roundData);
-        console.log('✅ Round added with auto ID:', docRef.id);
-      }
-      
-      return { success: true };
+      return { success: true, id: docRef.id };
     } catch (error) {
-      console.error('❌ Error adding round:', error);
+      console.error('❌ Error adding transaction:', error);
       return { success: false, error: error.message };
     }
   },
 
-  async updateRound(roundId, updates) {
+  // ========== PAYMENTS ==========
+  async getPayments() {
     try {
-      console.log('🔄 Updating round:', roundId, 'with updates:', updates);
+      const userId = getCurrentUserId();
+      console.log('💰 Getting payments for user:', userId);
       
-      if (!roundId) {
-        console.error('❌ No roundId provided');
-        return { success: false, error: 'No round ID provided' };
+      const snapshot = await getDocs(collection(db, 'payments'));
+      let payments = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      // Filtrar por userId se existir
+      if (userId) {
+        payments = payments.filter(p => p.userId === userId);
       }
       
-      const roundRef = doc(db, 'rounds', roundId);
+      console.log('📊 Total payments found:', payments.length);
+      return payments;
+    } catch (error) {
+      console.error('❌ Error getting payments:', error);
+      return [];
+    }
+  },
+
+  async addPayment(payment) {
+    try {
+      const userId = getCurrentUserId();
+      console.log('💰 Adding payment for user:', userId);
       
-      // Verificar se existe primeiro
-      const roundDoc = await getDoc(roundRef);
-      if (!roundDoc.exists()) {
-        console.error('❌ Round does not exist:', roundId);
-        return { success: false, error: 'Round not found', code: 'ROUND_NOT_FOUND' };
-      }
+      const paymentData = {
+        ...payment,
+        userId: userId || 'anonymous',
+        createdAt: new Date().toISOString(),
+        status: payment.status || 'pending'
+      };
       
-      // Adicionar timestamp de atualização
+      const docRef = await addDoc(collection(db, 'payments'), paymentData);
+      console.log('✅ Payment added with ID:', docRef.id);
+      
+      return { success: true, id: docRef.id };
+    } catch (error) {
+      console.error('❌ Error adding payment:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async updatePayment(paymentId, updates) {
+    try {
+      console.log('🔄 Updating payment:', paymentId);
+      
+      const paymentRef = doc(db, 'payments', paymentId);
+      
       const updateData = {
         ...updates,
         updatedAt: new Date().toISOString()
       };
       
-      // Tentar atualizar
-      await updateDoc(roundRef, updateData);
+      await updateDoc(paymentRef, updateData);
+      console.log('✅ Payment updated successfully');
       
-      console.log('✅ Round updated successfully');
       return { success: true };
-      
     } catch (error) {
-      console.error('❌ Error updating round:', error);
+      console.error('❌ Error updating payment:', error);
       return { success: false, error: error.message };
     }
   },
 
-  async getRoundById(roundId) {
-    try {
-      console.log('🔍 Getting round by ID:', roundId);
-      
-      const roundRef = doc(db, 'rounds', roundId);
-      const roundDoc = await getDoc(roundRef);
-      
-      if (roundDoc.exists()) {
-        const roundData = { id: roundDoc.id, ...roundDoc.data() };
-        console.log('📊 Round found:', roundData);
-        return roundData;
-      } else {
-        console.log('⚠️ Round not found with ID:', roundId);
-        return null;
-      }
-    } catch (error) {
-      console.error('❌ Error getting round by ID:', error);
-      return null;
-    }
-  },
-
-  async getCurrentRound() {
+  async confirmPayment(paymentId, amount, notes = '') {
     try {
       const userId = getCurrentUserId();
-      console.log('🎯 Getting current round for user:', userId);
+      console.log('✅ Confirming payment:', paymentId);
       
-      const snapshot = await getDocs(collection(db, 'rounds'));
-      let rounds = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const paymentRef = doc(db, 'payments', paymentId);
       
-      // Filtrar manualmente
-      if (userId) {
-        rounds = rounds.filter(r => r.userId === userId && r.status === 'active');
-      } else {
-        rounds = rounds.filter(r => r.status === 'active');
+      // Buscar o pagamento para obter o valor original
+      const paymentDoc = await getDoc(paymentRef);
+      
+      if (!paymentDoc.exists()) {
+        console.error('❌ Payment not found:', paymentId);
+        return { success: false, error: 'Payment not found' };
       }
       
-      // Ordenar e pegar o mais recente
-      rounds.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      const payment = paymentDoc.data();
       
-      const currentRound = rounds.length > 0 ? rounds[0] : null;
-      console.log('📊 Current round:', currentRound);
+      const updates = {
+        amountPaid: amount,
+        status: amount >= (payment.amount || 0) ? 'paid' : 'partial',
+        paidAt: new Date().toISOString(),
+        confirmedBy: userId,
+        notes
+      };
       
-      return currentRound;
-    } catch (error) {
-      console.error('❌ Error getting current round:', error);
-      return null;
-    }
-  },
-
-  async deleteRound(roundId) {
-    try {
-      console.log('🗑️ Attempting to delete round with ID:', roundId);
-      
-      if (!roundId) {
-        console.error('❌ No roundId provided');
-        return { success: false, error: 'No round ID provided' };
-      }
-      
-      // Verificar se o documento existe primeiro
-      const roundRef = doc(db, 'rounds', roundId);
-      const roundDoc = await getDoc(roundRef);
-      
-      if (!roundDoc.exists()) {
-        console.error('❌ Round document does not exist:', roundId);
-        return { success: false, error: 'Round not found in database' };
-      }
-      
-      console.log('📄 Round exists, proceeding with deletion...');
-      await deleteDoc(roundRef);
-      console.log('✅ Round deleted successfully');
+      await updateDoc(paymentRef, updates);
+      console.log('✅ Payment confirmed');
       
       return { success: true };
-      
     } catch (error) {
-      console.error('❌ Error deleting round:', error);
-      console.error('Error code:', error.code);
-      console.error('Error message:', error.message);
-      
+      console.error('❌ Error confirming payment:', error);
       return { success: false, error: error.message };
     }
   },
 
-  // FINANCIAL REPORTS
+  // ========== FINANCIAL REPORTS ==========
   async generateFinancialReport(leagueId = 'default') {
     try {
       const userId = getCurrentUserId();
@@ -676,7 +863,7 @@ export const firestoreService = {
       const userId = getCurrentUserId();
       const paymentRef = doc(db, 'paymentTracking', paymentId);
       
-      // Primeiro, buscar o documento para obter o amountOwed
+      // Buscar o documento para obter o amountOwed
       const paymentDoc = await getDoc(paymentRef);
       if (!paymentDoc.exists()) {
         throw new Error('Payment record not found');
@@ -702,7 +889,7 @@ export const firestoreService = {
     }
   },
 
-  // Função auxiliar para verificar se documento existe
+  // ========== UTILITY FUNCTIONS ==========
   async documentExists(collectionName, docId) {
     try {
       const docRef = doc(db, collectionName, docId);
@@ -712,13 +899,31 @@ export const firestoreService = {
       console.error('Error checking document existence:', error);
       return false;
     }
+  },
+
+  // Método para verificar conexão
+  async checkConnection() {
+    try {
+      // Tentar ler um documento simples
+      const testRef = doc(db, 'test', 'connection');
+      await getDoc(testRef);
+      return true;
+    } catch (error) {
+      console.error('Firebase connection error:', error);
+      return false;
+    }
   }
 };
 
-// Expor funções globalmente para debug (remover em produção)
-if (typeof window !== 'undefined') {
+
+
+// Expor funções globalmente para debug (apenas em desenvolvimento)
+if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
   window.firestoreService = firestoreService;
   window.authService = authService;
+  window.getCurrentUserId = getCurrentUserId;
+  console.log('🛠️ Firebase services exposed to window for debugging');
 }
 
+// Export default para compatibilidade
 export default { authService, firestoreService };

@@ -1,593 +1,918 @@
-// src/components/dashboard/Dashboard.js - VERSÃO CORRIGIDA E OTIMIZADA
+// src/components/dashboard/FullDesktopDashboard.js
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { 
+  Trophy, Users, Euro, Plus, Settings, Search, Filter,
+  ChevronDown, User, X, Check, AlertCircle, FileText,
+  RefreshCw, LogOut, Menu, Calendar, DollarSign, Target,
+  Award, CreditCard, TrendingUp, TrendingDown, Clock,
+  UtensilsCrossed, Trash2, Edit, MoreVertical, ChevronRight,
+  Home, PieChart, Wallet, Receipt, Bell, Activity, BarChart3,
+  Download, Upload, Database, Shield, Zap, ArrowUpRight,
+  ArrowDownRight, Info, HelpCircle
+} from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { firestoreService } from '../../services/firebase';
-import Header from '../common/Header';
-import StatsCards from './StatsCards';
-import PlayerList from '../players/PlayerList';
 import PlayerProfile from '../players/PlayerProfile';
 import RoundsManager from '../rounds/RoundsManager';
 import FinancialReport from '../financial/FinancialReport';
 
-const Dashboard = () => {
+const FullDesktopDashboard = () => {
   const [players, setPlayers] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [settings, setSettings] = useState({
     entryFee: 20,
     weeklyPayment: 5,
+    dinnerPotGoal: 200,
     distributionPercentages: [40, 30, 20, 10]
   });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [viewingProfile, setViewingProfile] = useState(null);
   const [currentView, setCurrentView] = useState('dashboard');
-  const [isAddingPlayer, setIsAddingPlayer] = useState(false);
-
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
+  const [viewingProfile, setViewingProfile] = useState(null);
+  const [showAddPlayer, setShowAddPlayer] = useState(false);
+  const [newPlayerName, setNewPlayerName] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterStatus, setFilterStatus] = useState('Todos');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  
+  const { user, signOut } = useAuth();
 
   useEffect(() => {
-    if (!user) {
-      navigate('/login');
-    } else {
-      loadData();
-    }
-  }, [user, navigate]);
+    loadData();
+  }, []);
 
   const loadData = async () => {
     try {
       setLoading(true);
-      setError(null);
-      console.log('🔄 Loading all data...');
       
       const [playersData, transactionsData, settingsData, roundsData] = await Promise.all([
-        firestoreService.getPlayers(),
-        firestoreService.getTransactions(),
-        firestoreService.getSettings(),
-        firestoreService.getRounds()
+        firestoreService.getPlayers().catch(() => []),
+        firestoreService.getTransactions().catch(() => []),
+        firestoreService.getSettings().catch(() => null),
+        firestoreService.getRounds().catch(() => [])
       ]);
-
-      console.log('📊 Data loaded:', {
-        players: playersData.length,
-        transactions: transactionsData.length,
-        rounds: roundsData.length
-      });
 
       setPlayers(playersData || []);
       setTransactions(transactionsData || []);
       setRounds(roundsData || []);
+      if (settingsData) setSettings(settingsData);
       
-      if (settingsData) {
-        setSettings(settingsData);
-      }
     } catch (error) {
-      console.error('❌ Error loading data:', error);
-      setError('Erro ao carregar dados. Verifica a tua conexão.');
+      console.error('Error loading data:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  // FUNÇÃO CORRIGIDA: Adicionar Jogador
-  const addPlayer = async (playerName) => {
-    // Prevenir múltiplas execuções simultâneas
-    if (isAddingPlayer) {
-      console.warn('⚠️ Already adding a player, ignoring duplicate request');
-      return { success: false, error: 'Já está a adicionar um jogador' };
-    }
-
-    try {
-      setIsAddingPlayer(true);
-      console.log('➕ Adding player:', playerName);
-      
-      // Validação de nome vazio
-      if (!playerName || playerName.trim().length === 0) {
-        alert('❌ O nome do jogador não pode estar vazio!');
-        return { success: false, error: 'Nome vazio' };
-      }
-
-      // Validação de comprimento do nome
-      if (playerName.trim().length < 2) {
-        alert('❌ O nome do jogador deve ter pelo menos 2 caracteres!');
-        return { success: false, error: 'Nome muito curto' };
-      }
-
-      // Validação de duplicados (case-insensitive e com trim)
-      const normalizedName = playerName.trim().toLowerCase();
-      const existingPlayer = players.find(p => 
-        p.name.toLowerCase().trim() === normalizedName
-      );
-      
-      if (existingPlayer) {
-        alert(`❌ Jogador "${playerName.trim()}" já existe na liga!`);
-        return { success: false, error: 'Jogador duplicado' };
-      }
-
-      // Gerar ID único mais robusto
-      const timestamp = Date.now();
-      const randomStr = Math.random().toString(36).substr(2, 9);
-      const uniqueId = `player_${timestamp}_${randomStr}`;
-      
-      // Criar novo jogador
-      const newPlayer = {
-        id: uniqueId,
-        name: playerName.trim(),
-        balance: -settings.entryFee,  // Começa com dívida da quota de entrada
-        paid: false,
-        totalPoints: 0,
-        totalRounds: 0,
-        rounds: [],
-        createdAt: new Date().toISOString(),
-        createdBy: user?.uid || 'anonymous',
-        lastUpdated: new Date().toISOString()
-      };
-
-      console.log('💾 Saving new player:', newPlayer);
-      
-      // Salvar no Firebase
-      const saveResult = await firestoreService.savePlayer(newPlayer);
-      if (!saveResult.success) {
-        throw new Error(saveResult.error || 'Failed to save player');
-      }
-
-      console.log('💸 Adding entry fee transaction...');
-      
-      // Adicionar transação de quota de entrada
-      const transactionResult = await firestoreService.addTransaction({
-        playerId: uniqueId,
-        playerName: newPlayer.name,
-        type: 'debt',
-        amount: settings.entryFee,
-        note: `Quota de entrada da liga (${settings.entryFee}€)`,
-        balanceAfter: -settings.entryFee,
-        timestamp: new Date().toISOString(),
-        createdBy: user?.uid || 'anonymous'
-      });
-
-      if (!transactionResult.success) {
-        console.error('⚠️ Failed to create transaction:', transactionResult.error);
-      }
-
-      console.log('🔄 Reloading data after player addition...');
-      await loadData();
-      
-      // Notificação de sucesso
-      alert(`✅ ${newPlayer.name} foi adicionado à liga com sucesso!\n💰 Quota de entrada: ${settings.entryFee}€`);
-      
-      console.log('✅ Player added successfully');
-      return { success: true, player: newPlayer };
-      
-    } catch (error) {
-      console.error('❌ Error adding player:', error);
-      setError('Erro ao adicionar jogador: ' + error.message);
-      alert(`❌ Erro ao adicionar jogador: ${error.message}`);
-      return { success: false, error: error.message };
-    } finally {
-      setIsAddingPlayer(false);
-    }
+  // Calculate all stats
+  const stats = {
+    totalPlayers: players.length,
+    paidPlayers: players.filter(p => p.paid).length,
+    unpaidPlayers: players.filter(p => !p.paid).length,
+    totalBalance: players.reduce((sum, p) => sum + (p.balance || 0), 0),
+    totalCredit: players.reduce((sum, p) => sum + Math.max(0, p.balance || 0), 0),
+    totalDebt: Math.abs(players.reduce((sum, p) => sum + Math.min(0, p.balance || 0), 0)),
+    dinnerPot: Math.abs(players.reduce((sum, p) => sum + (p.balance || 0), 0)),
+    totalPoints: players.reduce((sum, p) => sum + (p.totalPoints || 0), 0),
+    averagePoints: players.length > 0 ? (players.reduce((sum, p) => sum + (p.totalPoints || 0), 0) / players.length).toFixed(1) : '0.0',
+    totalRounds: rounds.length,
+    activePercentage: players.length > 0 ? ((players.filter(p => p.paid).length / players.length) * 100).toFixed(0) : 0,
+    lastTransaction: transactions[0]?.date ? new Date(transactions[0].date).toLocaleDateString('pt-PT') : 'N/A',
+    topPlayer: players.sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0))[0]?.name || 'N/A',
+    weeklyGrowth: 12.5, // Mock data
+    monthlyGrowth: 28.3 // Mock data
   };
 
-  // FUNÇÃO CORRIGIDA: Atualizar Jogador
-  const updatePlayer = async (updatedPlayer) => {
-    try {
-      console.log('🔄 Updating player:', updatedPlayer);
-      
-      // Validação básica
-      if (!updatedPlayer || !updatedPlayer.id) {
-        throw new Error('Dados do jogador inválidos');
-      }
-
-      // Adicionar timestamp de última atualização
-      updatedPlayer.lastUpdated = new Date().toISOString();
-      
-      // Salvar no Firebase
-      const saveResult = await firestoreService.savePlayer(updatedPlayer);
-      if (!saveResult.success) {
-        throw new Error(saveResult.error || 'Failed to update player');
-      }
-
-      console.log('✅ Player saved to database');
-
-      // Atualizar estado local
-      setPlayers(prevPlayers => 
-        prevPlayers.map(p => 
-          p.id === updatedPlayer.id ? updatedPlayer : p
-        )
-      );
-      
-      // Fechar perfil se estava aberto
-      if (viewingProfile && viewingProfile.id === updatedPlayer.id) {
-        setViewingProfile(null);
-      }
-      
-      console.log('✅ UI updated successfully');
-      return { success: true };
-      
-    } catch (error) {
-      console.error('❌ Error updating player:', error);
-      setError('Erro ao atualizar jogador: ' + error.message);
-      await loadData(); // Recarregar dados em caso de erro
-      return { success: false, error: error.message };
-    }
+  const getPotStatus = () => {
+    if (stats.dinnerPot === 0) return { text: 'Vazio', color: 'text-gray-600', bg: 'bg-gray-100' };
+    if (stats.dinnerPot < 50) return { text: 'Baixo', color: 'text-red-600', bg: 'bg-red-100' };
+    if (stats.dinnerPot < 100) return { text: 'Médio', color: 'text-yellow-600', bg: 'bg-yellow-100' };
+    return { text: 'Bom', color: 'text-green-600', bg: 'bg-green-100' };
   };
 
-  // FUNÇÃO CORRIGIDA: Remover Jogador
-  const removePlayer = async (playerId) => {
-    try {
-      console.log('🗑️ Removing player with ID:', playerId);
-      
-      // Converter ID para string e procurar jogador
-      const playerIdString = String(playerId);
-      const player = players.find(p => String(p.id) === playerIdString);
-      
-      if (!player) {
-        console.error('Player not found with ID:', playerId);
-        alert('❌ Jogador não encontrado!');
-        return { success: false, error: 'Jogador não encontrado' };
-      }
+  const potStatus = getPotStatus();
 
-      // Confirmação com detalhes
-      const confirmDelete = window.confirm(
-        `⚠️ ATENÇÃO: Vais eliminar ${player.name}\n\n` +
-        `Dados do jogador:\n` +
-        `• Saldo atual: ${player.balance.toFixed(2)}€\n` +
-        `• Total de pontos: ${player.totalPoints || 0}\n` +
-        `• Rondas jogadas: ${player.totalRounds || 0}\n\n` +
-        `Esta ação irá:\n` +
-        `• Eliminar permanentemente o jogador\n` +
-        `• Remover todos os seus dados\n` +
-        `• Manter o histórico de transações\n\n` +
-        `⚠️ Esta ação NÃO pode ser desfeita!\n\n` +
-        `Confirmar eliminação?`
-      );
-      
-      if (!confirmDelete) {
-        return { success: false, error: 'Cancelado pelo utilizador' };
-      }
+  // Filter players
+const filteredPlayers = players.filter(player => {
+  // Verificar se o jogador existe e tem nome
+  if (!player || !player.name) {
+    console.warn('Jogador inválido encontrado:', player);
+    return false;
+  }
+  
+  // Garantir que searchQuery é string
+  const searchTerm = (searchQuery || '').toLowerCase();
+  const playerName = player.name.toLowerCase();
+  
+  const matchesSearch = playerName.includes(searchTerm);
+  
+  const matchesFilter =
+    filterStatus === 'Todos' ||
+    (filterStatus === 'Pagos' && player.paid) ||
+    (filterStatus === 'Por Pagar' && !player.paid) ||
+    (filterStatus === 'Devedores' && (player.balance || 0) < 0) ||
+    (filterStatus === 'Credores' && (player.balance || 0) > 0);
+  
+  return matchesSearch && matchesFilter;
+});
 
-      console.log('🗑️ Deleting player from database...');
-      
-      // Registrar a remoção no histórico
-      await firestoreService.addTransaction({
-        playerId: playerIdString,
-        playerName: player.name,
-        type: 'removal',
-        amount: 0,
-        note: `Jogador removido da liga (Saldo final: ${player.balance.toFixed(2)}€)`,
-        balanceAfter: 0,
-        timestamp: new Date().toISOString(),
-        createdBy: user?.uid || 'anonymous'
-      });
-
-      // Eliminar jogador do Firebase
-      const deleteResult = await firestoreService.deletePlayer(playerIdString);
-      
-      if (!deleteResult.success) {
-        throw new Error(deleteResult.error || 'Failed to delete player');
-      }
-
-      console.log('✅ Player removed successfully');
-      
-      // Recarregar dados
-      await loadData();
-      
-      // Notificação de sucesso
-      alert(`✅ ${player.name} foi removido da liga com sucesso!`);
-      
-      return { success: true };
-      
-    } catch (error) {
-      console.error('❌ Error removing player:', error);
-      alert(`❌ Erro ao remover jogador: ${error.message}`);
-      return { success: false, error: error.message };
-    }
-  };
-
-  // FUNÇÃO: Remover Todos os Jogadores
-  const removeAllPlayers = async () => {
-    try {
-      if (players.length === 0) {
-        alert('❌ Não há jogadores para eliminar!');
-        return;
-      }
-
-      // Primeira confirmação
-      const confirmDelete = window.confirm(
-        `⚠️ ATENÇÃO: Vais eliminar TODOS os ${players.length} jogadores!\n\n` +
-        `Esta ação irá:\n` +
-        `• Eliminar todos os jogadores da liga\n` +
-        `• Apagar todos os dados de jogadores\n` +
-        `• Manter apenas o histórico de transações\n\n` +
-        `⚠️ Esta ação NÃO pode ser desfeita!\n\n` +
-        `Tens a certeza que queres continuar?`
-      );
-      
-      if (!confirmDelete) {
-        return;
-      }
-
-      // Segunda confirmação
-      const doubleConfirm = window.confirm(
-        `🚨 ÚLTIMA CONFIRMAÇÃO\n\n` +
-        `Vais eliminar ${players.length} jogadores permanentemente.\n\n` +
-        `Esta é a tua última oportunidade de cancelar.\n\n` +
-        `Confirmar eliminação de TODOS os jogadores?`
-      );
-
-      if (!doubleConfirm) {
-        return;
-      }
-
-      // Terceira confirmação com input
-      const userInput = prompt(
-        `Para confirmar a eliminação de ${players.length} jogadores,\n` +
-        `escreve "ELIMINAR TODOS" (sem aspas):`
-      );
-      
-      if (userInput !== 'ELIMINAR TODOS') {
-        alert('❌ Operação cancelada. Texto não corresponde.');
-        return;
-      }
-
-      console.log('🗑️ Removing all players...');
-
-      // Registrar remoção em massa no histórico
-      await firestoreService.addTransaction({
-        playerId: 'bulk_removal',
-        playerName: 'Todos os Jogadores',
-        type: 'removal',
-        amount: 0,
-        note: `Remoção em massa de ${players.length} jogadores`,
-        timestamp: new Date().toISOString(),
-        createdBy: user?.uid || 'anonymous'
-      });
-
-      // Eliminar cada jogador
-      for (const player of players) {
-        await firestoreService.deletePlayer(player.id);
-      }
-
-      console.log('✅ All players removed successfully');
-      
-      // Limpar estado e recarregar
-      setPlayers([]);
-      await loadData();
-      
-      alert(`✅ ${players.length} jogadores foram removidos com sucesso!`);
-      
-    } catch (error) {
-      console.error('❌ Error removing all players:', error);
-      alert(`❌ Erro ao remover jogadores: ${error.message}`);
-    }
-  };
-
-  // FUNÇÃO: Limpar Jogadores Duplicados
-  const cleanDuplicatePlayers = async () => {
-    try {
-      console.log('🧹 Checking for duplicate players...');
-      
-      const uniquePlayers = {};
-      const duplicates = [];
-      
-      // Identificar duplicados
-      players.forEach(player => {
-        const normalizedName = player.name.toLowerCase().trim();
-        if (uniquePlayers[normalizedName]) {
-          // Manter o jogador mais antigo
-          const existing = uniquePlayers[normalizedName];
-          if (new Date(player.createdAt) < new Date(existing.createdAt)) {
-            duplicates.push(existing);
-            uniquePlayers[normalizedName] = player;
-          } else {
-            duplicates.push(player);
-          }
-        } else {
-          uniquePlayers[normalizedName] = player;
-        }
-      });
-      
-      if (duplicates.length === 0) {
-        alert('✅ Não foram encontrados jogadores duplicados!');
-        return;
-      }
-      
-      const confirmClean = window.confirm(
-        `🔍 Encontrados ${duplicates.length} jogadores duplicados:\n\n` +
-        duplicates.map(p => `• ${p.name} (Saldo: ${p.balance.toFixed(2)}€)`).join('\n') +
-        `\n\nRemover duplicados? (Será mantido o mais antigo de cada)`
-      );
-      
-      if (!confirmClean) {
-        return;
-      }
-      
-      // Remover duplicados
-      for (const duplicate of duplicates) {
-        await firestoreService.deletePlayer(duplicate.id);
-      }
-      
-      await loadData();
-      alert(`✅ ${duplicates.length} jogadores duplicados foram removidos!`);
-      
-    } catch (error) {
-      console.error('❌ Error cleaning duplicates:', error);
-      alert(`❌ Erro ao limpar duplicados: ${error.message}`);
-    }
-  };
-
-  // FUNÇÃO: Toggle Status de Pagamento
-  const togglePaidStatus = async (playerId) => {
-    try {
-      const player = players.find(p => p.id === playerId);
-      if (!player) return;
-      
-      const updatedPlayer = {
-        ...player,
-        paid: !player.paid,
-        lastUpdated: new Date().toISOString()
-      };
-      
-      await updatePlayer(updatedPlayer);
-      
-    } catch (error) {
-      console.error('❌ Error toggling paid status:', error);
-    }
-  };
-
-  // Verificar estado de carregamento
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">A carregar dados...</p>
+          <div className="relative">
+            <div className="h-20 w-20 bg-green-600 rounded-2xl flex items-center justify-center mx-auto mb-4 animate-pulse">
+              <Trophy className="h-10 w-10 text-white" />
+            </div>
+          </div>
+          <p className="text-gray-600 text-lg">A carregar Liga Record...</p>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <Header onLogout={logout} user={user} />
-      
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Error Alert */}
-        {error && (
-          <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
-            <span className="block sm:inline">{error}</span>
-            <button
-              onClick={() => setError(null)}
-              className="absolute top-0 bottom-0 right-0 px-4 py-3"
-            >
-              <span className="text-red-500">×</span>
-            </button>
+  // Sidebar Navigation
+  const Sidebar = () => (
+    <div className={`${sidebarCollapsed ? 'w-20' : 'w-64'} bg-white border-r h-screen fixed left-0 top-0 transition-all duration-300 z-40`}>
+      {/* Logo */}
+      <div className="p-4 border-b">
+        <div className="flex items-center justify-between">
+          <div className={`flex items-center space-x-3 ${sidebarCollapsed ? 'justify-center' : ''}`}>
+            <div className="h-10 w-10 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center">
+              <Trophy className="h-6 w-6 text-white" />
+            </div>
+            {!sidebarCollapsed && (
+              <div>
+                <h1 className="font-bold text-lg">Liga Record</h1>
+                <p className="text-xs text-gray-500">dos Cuícos</p>
+              </div>
+            )}
           </div>
-        )}
-
-        {/* Navigation Tabs */}
-        <div className="mb-6 border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8">
-            <button
-              onClick={() => setCurrentView('dashboard')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                currentView === 'dashboard'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              📊 Dashboard
-            </button>
-            <button
-              onClick={() => setCurrentView('rounds')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                currentView === 'rounds'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              ⚽ Rondas
-            </button>
-            <button
-              onClick={() => setCurrentView('financial')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                currentView === 'financial'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              💰 Finanças
-            </button>
-          </nav>
+          <button
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className={`p-1 hover:bg-gray-100 rounded ${sidebarCollapsed ? 'mx-auto mt-2' : ''}`}
+          >
+            <Menu className="h-5 w-5 text-gray-600" />
+          </button>
         </div>
+      </div>
 
-        {/* Profile View */}
-        {viewingProfile && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="sticky top-0 bg-white border-b p-4 flex justify-between items-center">
-                <h2 className="text-xl font-semibold">Perfil do Jogador</h2>
-                <button
-                  onClick={() => setViewingProfile(null)}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  ✕
-                </button>
-              </div>
-              <div className="p-4">
-                <PlayerProfile
-                  player={viewingProfile}
-                  onBack={() => setViewingProfile(null)}
-                  onUpdatePlayer={updatePlayer}
-                  transactions={transactions}
-                  totalPot={players.reduce((sum, p) => sum + Math.max(0, -p.balance), 0)}
-                  settings={settings}
-                />
-              </div>
-            </div>
+      {/* Navigation */}
+      <nav className="p-4 space-y-2">
+        {[
+          { id: 'dashboard', label: 'Dashboard', icon: Home },
+          { id: 'players', label: 'Jogadores', icon: Users },
+          { id: 'rounds', label: 'Rondas', icon: Trophy },
+          { id: 'financial', label: 'Finanças', icon: PieChart },
+          { id: 'settings', label: 'Configurações', icon: Settings }
+        ].map(item => (
+          <button
+            key={item.id}
+            onClick={() => setCurrentView(item.id)}
+            className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center' : 'space-x-3'} px-3 py-2 rounded-lg transition-all ${
+              currentView === item.id 
+                ? 'bg-green-50 text-green-600' 
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
+            title={sidebarCollapsed ? item.label : ''}
+          >
+            <item.icon className="h-5 w-5" />
+            {!sidebarCollapsed && <span className="font-medium">{item.label}</span>}
+          </button>
+        ))}
+      </nav>
+
+      {/* User Section */}
+      <div className="absolute bottom-0 left-0 right-0 p-4 border-t bg-white">
+        <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'space-x-3'}`}>
+          <div className="h-10 w-10 bg-gray-200 rounded-full flex items-center justify-center">
+            <User className="h-5 w-5 text-gray-600" />
           </div>
-        )}
-
-        {/* Main Content */}
-        <div className="pb-8">
-          {currentView === 'dashboard' && (
-            <div className="space-y-8">
-              {/* Stats Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <StatsCards players={players} settings={settings} />
-              </div>
-              
-              {/* Players List */}
-              <PlayerList
-                players={players}
-                onViewProfile={setViewingProfile}
-                onTogglePaidStatus={togglePaidStatus}
-                onRemovePlayer={removePlayer}
-                onRemoveAllPlayers={removeAllPlayers}
-                onCleanDuplicates={cleanDuplicatePlayers}
-                onAddPlayer={addPlayer}
-                isAddingPlayer={isAddingPlayer}
-              />
-            </div>
-          )}
-
-          {currentView === 'rounds' && (
-            <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-              <div className="bg-gradient-to-r from-blue-600 to-green-600 px-6 py-4">
-                <h2 className="text-xl font-bold text-white">
-                  ⚽ Gestão de Rondas Semanais
-                </h2>
-              </div>
-              <div className="p-6">
-                <RoundsManager
-                  players={players}
-                  onUpdatePlayers={() => loadData()}
-                  settings={settings}
-                />
-              </div>
-            </div>
-          )}
-
-          {currentView === 'financial' && (
-            <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-              <div className="bg-gradient-to-r from-purple-600 to-pink-600 px-6 py-4">
-                <h2 className="text-xl font-bold text-white">
-                  💰 Relatórios Financeiros e Gestão de Pagamentos
-                </h2>
-              </div>
-              <div className="p-6">
-                <FinancialReport 
-                  onBack={() => setCurrentView('dashboard')}
-                  players={players}
-                />
-              </div>
+          {!sidebarCollapsed && (
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-900">{user?.email?.split('@')[0] || 'joaoazul'}</p>
+              <button
+                onClick={signOut}
+                className="text-xs text-red-600 hover:text-red-700"
+              >
+                Sair
+              </button>
             </div>
           )}
         </div>
       </div>
     </div>
   );
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Sidebar />
+      
+      {/* Main Content */}
+      <div className={`${sidebarCollapsed ? 'ml-20' : 'ml-64'} transition-all duration-300`}>
+        {/* Top Bar */}
+        <div className="bg-white border-b px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">
+                {currentView === 'dashboard' && 'Dashboard'}
+                {currentView === 'players' && 'Gestão de Jogadores'}
+                {currentView === 'rounds' && 'Gestão de Rondas'}
+                {currentView === 'financial' && 'Gestão Financeira e Relatórios'}
+                {currentView === 'settings' && 'Configurações'}
+              </h2>
+              <p className="text-sm text-gray-500 mt-1">
+                {new Date().toLocaleDateString('pt-PT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+              </p>
+            </div>
+            
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={loadData}
+                className="p-2 hover:bg-gray-100 rounded-lg"
+                title="Atualizar"
+              >
+                <RefreshCw className="h-5 w-5 text-gray-600" />
+              </button>
+              
+              <button
+                onClick={() => setShowNotifications(!showNotifications)}
+                className="p-2 hover:bg-gray-100 rounded-lg relative"
+              >
+                <Bell className="h-5 w-5 text-gray-600" />
+                <span className="absolute top-1 right-1 h-2 w-2 bg-red-500 rounded-full" />
+              </button>
+              
+              <button
+                onClick={() => alert('Exportar dados em desenvolvimento')}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center space-x-2"
+              >
+                <Download className="h-4 w-4" />
+                <span className="text-sm font-medium">Exportar</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Dashboard Content */}
+        {currentView === 'dashboard' && (
+          <div className="p-6">
+            {/* Stats Grid */}
+            <div className="grid grid-cols-4 gap-6 mb-6">
+              {/* Main Stats Cards */}
+              <div className="bg-white rounded-xl shadow-sm p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="h-12 w-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                    <Users className="h-6 w-6 text-blue-600" />
+                  </div>
+                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                    stats.weeklyGrowth > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                  }`}>
+                    {stats.weeklyGrowth > 0 ? '+' : ''}{stats.weeklyGrowth}%
+                  </span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900">{stats.totalPlayers}</p>
+                <p className="text-sm text-gray-500 mt-1">Total de Jogadores</p>
+                <div className="mt-4 pt-4 border-t">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-green-600">{stats.paidPlayers} pagos</span>
+                    <span className="text-orange-600">{stats.unpaidPlayers} pendentes</span>
+                  </div>
+                  <div className="mt-2 bg-gray-200 rounded-full h-2">
+                    <div className="bg-green-600 h-2 rounded-full" style={{ width: `${stats.activePercentage}%` }} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="h-12 w-12 bg-green-100 rounded-xl flex items-center justify-center">
+                    <Euro className="h-6 w-6 text-green-600" />
+                  </div>
+                  <ArrowUpRight className="h-4 w-4 text-green-600" />
+                </div>
+                <p className="text-2xl font-bold text-gray-900">
+                  {stats.totalBalance >= 0 ? '+' : ''}{stats.totalBalance.toFixed(2)}€
+                </p>
+                <p className="text-sm text-gray-500 mt-1">Saldo Total</p>
+                <div className="mt-4 pt-4 border-t space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-600">Créditos:</span>
+                    <span className="text-green-600 font-medium">+{stats.totalCredit.toFixed(2)}€</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-600">Dívidas:</span>
+                    <span className="text-red-600 font-medium">-{stats.totalDebt.toFixed(2)}€</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="h-12 w-12 bg-orange-100 rounded-xl flex items-center justify-center">
+                    <UtensilsCrossed className="h-6 w-6 text-orange-600" />
+                  </div>
+                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${potStatus.bg} ${potStatus.color}`}>
+                    {potStatus.text}
+                  </span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900">{stats.dinnerPot.toFixed(2)}€</p>
+                <p className="text-sm text-gray-500 mt-1">Pote do Jantar</p>
+                <div className="mt-4 pt-4 border-t">
+                  <div className="flex justify-between text-xs mb-2">
+                    <span className="text-gray-600">Meta:</span>
+                    <span className="font-medium">{settings.dinnerPotGoal}€</span>
+                  </div>
+                  <div className="bg-gray-200 rounded-full h-2">
+                    <div 
+                      className="bg-orange-600 h-2 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min((stats.dinnerPot / settings.dinnerPotGoal) * 100, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="h-12 w-12 bg-purple-100 rounded-xl flex items-center justify-center">
+                    <Trophy className="h-6 w-6 text-purple-600" />
+                  </div>
+                  <Activity className="h-4 w-4 text-purple-600" />
+                </div>
+                <p className="text-2xl font-bold text-gray-900">{stats.totalPoints}</p>
+                <p className="text-sm text-gray-500 mt-1">Pontos Totais</p>
+                <div className="mt-4 pt-4 border-t space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-600">Média:</span>
+                    <span className="font-medium">{stats.averagePoints} pts</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-600">Líder:</span>
+                    <span className="font-medium text-purple-600">{stats.topPlayer}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Content Grid */}
+            <div className="grid grid-cols-3 gap-6">
+              {/* Players Table */}
+              <div className="col-span-2 bg-white rounded-xl shadow-sm">
+                <div className="p-6 border-b">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold flex items-center space-x-2">
+                      <Users className="h-5 w-5 text-gray-700" />
+                      <span>Jogadores ({filteredPlayers.length})</span>
+                    </h3>
+                    <button
+                      onClick={() => setShowAddPlayer(true)}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2"
+                    >
+                      <Plus className="h-4 w-4" />
+                      <span className="font-medium">Adicionar</span>
+                    </button>
+                  </div>
+                  
+                  <div className="flex space-x-3">
+                    <div className="flex-1 relative">
+                      <Search className="h-5 w-5 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Pesquisar jogadores..."
+                        className="w-full pl-10 pr-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                    </div>
+                    <select
+                      value={filterStatus}
+                      onChange={(e) => setFilterStatus(e.target.value)}
+                      className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                    >
+                      <option>Todos</option>
+                      <option>Pagos</option>
+                      <option>Por Pagar</option>
+                      <option>Devedores</option>
+                      <option>Credores</option>
+                    </select>
+                  </div>
+                </div>
+                
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Jogador
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Saldo
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Pontos
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Estado
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Ações
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {filteredPlayers.map(player => {
+                        const isDebtor = player.balance < 0;
+                        const isCreditor = player.balance > 0;
+                        
+                        return (
+                          <tr key={player.id} className="hover:bg-gray-50">
+                            <td className="px-6 py-4">
+                              <div className="flex items-center space-x-3">
+                                <div className={`h-10 w-10 rounded-full flex items-center justify-center font-bold text-white ${
+                                  isDebtor ? 'bg-red-500' : 
+                                  isCreditor ? 'bg-green-500' : 
+                                  'bg-gray-400'
+                                }`}>
+                                  {player.name.substring(0, 2).toUpperCase()}
+                                </div>
+                                <span className="font-medium">{player.name}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`font-medium ${
+                                isDebtor ? 'text-red-600' : 
+                                isCreditor ? 'text-green-600' : 
+                                'text-gray-600'
+                              }`}>
+                                {player.balance >= 0 ? '+' : ''}{player.balance.toFixed(2)}€
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="text-blue-600 font-medium">
+                                {player.totalPoints || 0}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                player.paid
+                                  ? 'bg-green-100 text-green-700'
+                                  : 'bg-orange-100 text-orange-700'
+                              }`}>
+                                {player.paid ? 'Pago' : 'Por Pagar'}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <button
+                                onClick={() => setViewingProfile(player)}
+                                className="text-blue-600 hover:text-blue-700"
+                              >
+                                Ver Perfil
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  
+                  {filteredPlayers.length === 0 && (
+                    <div className="py-12 text-center">
+                      <User className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                      <p className="text-gray-500">Nenhum jogador encontrado</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Side Panel */}
+              <div className="space-y-6">
+                {/* Quick Actions */}
+                <div className="bg-white rounded-xl shadow-sm p-6">
+                  <h3 className="text-lg font-bold mb-4">Ações Rápidas</h3>
+                  <div className="space-y-3">
+                    <button 
+                      onClick={() => setCurrentView('rounds')}
+                      className="w-full px-4 py-3 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 flex items-center justify-between group"
+                    >
+                      <span className="font-medium">Nova Ronda</span>
+                      <ChevronRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
+                    </button>
+                    <button 
+                      onClick={async () => {
+                        if (window.confirm(`Cobrar taxa semanal de ${settings.weeklyPayment}€ a todos?`)) {
+                          await firestoreService.chargeWeeklyFees(settings.weeklyPayment);
+                          await loadData();
+                        }
+                      }}
+                      className="w-full px-4 py-3 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 flex items-center justify-between group"
+                    >
+                      <span className="font-medium">Cobrar Taxa ({settings.weeklyPayment}€)</span>
+                      <ChevronRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
+                    </button>
+                    <button 
+                      onClick={async () => {
+                        if (window.confirm('Quitar todas as dívidas?')) {
+                          await firestoreService.settleAllDebts();
+                          await loadData();
+                        }
+                      }}
+                      className="w-full px-4 py-3 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 flex items-center justify-between group"
+                    >
+                      <span className="font-medium">Quitar Dívidas</span>
+                      <ChevronRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
+                    </button>
+                    <button 
+                      onClick={() => setCurrentView('financial')}
+                      className="w-full px-4 py-3 bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 flex items-center justify-between group"
+                    >
+                      <span className="font-medium">Gerar Relatório</span>
+                      <ChevronRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Recent Activity */}
+                <div className="bg-white rounded-xl shadow-sm p-6">
+                  <h3 className="text-lg font-bold mb-4">Atividade Recente</h3>
+                  <div className="space-y-3">
+                    {transactions.slice(0, 5).map((t, idx) => {
+                      const player = players.find(p => p.id === t.playerId);
+                      return (
+                        <div key={idx} className="flex items-center justify-between py-2">
+                          <div className="flex items-center space-x-3">
+                            <div className={`h-2 w-2 rounded-full ${
+                              t.amount > 0 ? 'bg-green-500' : 'bg-red-500'
+                            }`} />
+                            <div>
+                              <p className="text-sm font-medium">{player?.name || 'Unknown'}</p>
+                              <p className="text-xs text-gray-500">{t.description || t.type}</p>
+                            </div>
+                          </div>
+                          <span className={`text-sm font-bold ${
+                            t.amount > 0 ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            {t.amount > 0 ? '+' : ''}{t.amount.toFixed(2)}€
+                          </span>
+                        </div>
+                      );
+                    })}
+                    
+                    {transactions.length === 0 && (
+                      <p className="text-gray-500 text-sm text-center py-4">
+                        Sem transações recentes
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* System Info */}
+                <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-6">
+                  <h3 className="text-lg font-bold mb-4">Informação do Sistema</h3>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Última Atualização:</span>
+                      <span className="font-medium">{stats.lastTransaction}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Versão:</span>
+                      <span className="font-medium">v2.0.1</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Estado:</span>
+                      <span className="text-green-600 font-medium">Online</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Players View - Lista completa dos jogadores */}
+        {currentView === 'players' && (
+          <div className="p-6">
+            <div className="bg-white rounded-xl shadow-sm">
+              <div className="p-6 border-b">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-2xl font-bold">Lista Completa de Jogadores</h3>
+                  <div className="flex space-x-3">
+                    <button
+                      onClick={loadData}
+                      className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center space-x-2"
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                      <span>Atualizar</span>
+                    </button>
+                    <button
+                      onClick={() => setShowAddPlayer(true)}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2"
+                    >
+                      <Plus className="h-4 w-4" />
+                      <span>Adicionar Jogador</span>
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Filters */}
+                <div className="grid grid-cols-4 gap-4 mb-4">
+                  <div className="relative">
+                    <Search className="h-5 w-5 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Pesquisar jogadores..."
+                      className="w-full pl-10 pr-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                  
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                    className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                  >
+                    <option>Todos</option>
+                    <option>Pagos</option>
+                    <option>Por Pagar</option>
+                    <option>Devedores</option>
+                    <option>Credores</option>
+                  </select>
+                  
+                  <button
+                    onClick={async () => {
+                      if (window.confirm(`Cobrar taxa semanal de ${settings.weeklyPayment}€ a todos?`)) {
+                        await firestoreService.chargeWeeklyFees(settings.weeklyPayment);
+                        await loadData();
+                      }
+                    }}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center space-x-2"
+                  >
+                    <CreditCard className="h-4 w-4" />
+                    <span>Cobrar Taxa Semanal</span>
+                  </button>
+                  
+                  <button
+                    onClick={() => alert('Exportar lista em desenvolvimento')}
+                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 flex items-center justify-center space-x-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Exportar Lista</span>
+                  </button>
+                </div>
+                
+                {/* Stats Summary */}
+                <div className="grid grid-cols-6 gap-4">
+                  <div className="bg-blue-50 rounded-lg p-3">
+                    <p className="text-xs text-blue-600 font-medium">Total</p>
+                    <p className="text-xl font-bold text-blue-900">{players.length}</p>
+                  </div>
+                  <div className="bg-green-50 rounded-lg p-3">
+                    <p className="text-xs text-green-600 font-medium">Pagos</p>
+                    <p className="text-xl font-bold text-green-900">{stats.paidPlayers}</p>
+                  </div>
+                  <div className="bg-orange-50 rounded-lg p-3">
+                    <p className="text-xs text-orange-600 font-medium">Pendentes</p>
+                    <p className="text-xl font-bold text-orange-900">{stats.unpaidPlayers}</p>
+                  </div>
+                  <div className="bg-purple-50 rounded-lg p-3">
+                    <p className="text-xs text-purple-600 font-medium">Média Pontos</p>
+                    <p className="text-xl font-bold text-purple-900">{stats.averagePoints}</p>
+                  </div>
+                  <div className="bg-red-50 rounded-lg p-3">
+                    <p className="text-xs text-red-600 font-medium">Total Dívidas</p>
+                    <p className="text-xl font-bold text-red-900">{stats.totalDebt.toFixed(0)}€</p>
+                  </div>
+                  <div className="bg-emerald-50 rounded-lg p-3">
+                    <p className="text-xs text-emerald-600 font-medium">Total Créditos</p>
+                    <p className="text-xl font-bold text-emerald-900">{stats.totalCredit.toFixed(0)}€</p>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Players Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        #
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Jogador
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Saldo
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Pontos
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Rondas
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Estado Pagamento
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Última Atividade
+                      </th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Ações
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {filteredPlayers.map((player, index) => {
+                      const isDebtor = player.balance < 0;
+                      const isCreditor = player.balance > 0;
+                      
+                      return (
+                        <tr key={player.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 text-sm text-gray-500">
+                            {index + 1}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center space-x-3">
+                              <div className={`h-10 w-10 rounded-full flex items-center justify-center font-bold text-white ${
+                                isDebtor ? 'bg-red-500' : 
+                                isCreditor ? 'bg-green-500' : 
+                                'bg-gray-400'
+                              }`}>
+                                {player.name.substring(0, 2).toUpperCase()}
+                              </div>
+                              <div>
+                                <p className="font-medium">{player.name}</p>
+                                <p className="text-xs text-gray-500">{player.email || 'Sem email'}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`font-medium ${
+                              isDebtor ? 'text-red-600' : 
+                              isCreditor ? 'text-green-600' : 
+                              'text-gray-600'
+                            }`}>
+                              {player.balance >= 0 ? '+' : ''}{player.balance.toFixed(2)}€
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="text-blue-600 font-medium">
+                              {player.totalPoints || 0}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="text-gray-600">
+                              {player.totalRounds || 0}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                              player.paid
+                                ? 'bg-green-100 text-green-700'
+                                : 'bg-orange-100 text-orange-700'
+                            }`}>
+                              {player.paid ? 'Pago' : 'Por Pagar'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-500">
+                            {player.lastActivity ? new Date(player.lastActivity).toLocaleDateString('pt-PT') : 'N/A'}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center justify-center space-x-2">
+                              <button
+                                onClick={() => setViewingProfile(player)}
+                                className="text-blue-600 hover:text-blue-700"
+                                title="Ver Perfil"
+                              >
+                                <User className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  await firestoreService.updatePlayer(player.id, { paid: !player.paid });
+                                  await loadData();
+                                }}
+                                className="text-green-600 hover:text-green-700"
+                                title="Alterar Estado"
+                              >
+                                <Check className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (window.confirm(`Eliminar ${player.name}?`)) {
+                                    await firestoreService.deletePlayer(player.id);
+                                    await loadData();
+                                  }
+                                }}
+                                className="text-red-600 hover:text-red-700"
+                                title="Eliminar"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                
+                {filteredPlayers.length === 0 && (
+                  <div className="py-12 text-center">
+                    <Users className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                    <p className="text-gray-500">Nenhum jogador encontrado</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Other Views */}
+        {currentView === 'rounds' && (
+          <div className="p-6">
+            <RoundsManager
+              players={players}
+              rounds={rounds}
+              onReload={loadData}
+              settings={settings}
+            />
+          </div>
+        )}
+
+        {currentView === 'financial' && (
+          <div className="p-6">
+            <FinancialReport
+              players={players}
+              transactions={transactions}
+              settings={settings}
+              onBack={() => setCurrentView('dashboard')}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Add Player Modal */}
+      {showAddPlayer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold">Adicionar Novo Jogador</h3>
+              <button onClick={() => setShowAddPlayer(false)}>
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
+            </div>
+            
+            <input
+              type="text"
+              value={newPlayerName}
+              onChange={(e) => setNewPlayerName(e.target.value)}
+              placeholder="Nome do jogador"
+              className="w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 mb-4"
+              autoFocus
+            />
+            
+            <div className="flex space-x-3">
+              <button
+                onClick={() => {
+                  setShowAddPlayer(false);
+                  setNewPlayerName('');
+                }}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  if (newPlayerName.trim()) {
+                    await firestoreService.addPlayer(newPlayerName.trim());
+                    await loadData();
+                    setNewPlayerName('');
+                    setShowAddPlayer(false);
+                  }
+                }}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                Adicionar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Player Profile */}
+      {viewingProfile && (
+        <PlayerProfile
+          player={viewingProfile}
+          transactions={transactions.filter(t => t.playerId === viewingProfile.id)}
+          onClose={() => setViewingProfile(null)}
+          onUpdate={async () => {
+            await loadData();
+            setViewingProfile(null);
+          }}
+        />
+      )}
+    </div>
+  );
 };
 
-export default Dashboard;
+export default FullDesktopDashboard;

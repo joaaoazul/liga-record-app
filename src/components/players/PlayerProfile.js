@@ -1,594 +1,623 @@
-// src/components/players/PlayerProfile.js - VERSÃO CORRIGIDA E OTIMIZADA
+// src/components/players/PlayerProfile.js - VERSÃO ATUALIZADA
 import React, { useState } from 'react';
-import { ArrowLeft, User, TrendingUp, TrendingDown, DollarSign, Calendar, Calculator, Trophy, Clock, AlertCircle } from 'lucide-react';
-import { useAuth } from '../../hooks/useAuth';
+import { 
+  X, 
+  Euro, 
+  TrendingUp, 
+  TrendingDown,
+  Calendar,
+  CreditCard,
+  CheckCircle,
+  AlertCircle,
+  Plus,
+  Minus,
+  History,
+  Trash2,
+  Edit
+} from 'lucide-react';
 import { firestoreService } from '../../services/firebase';
 
-const PlayerProfile = ({ player, onBack, onUpdatePlayer, transactions, totalPot, settings }) => {
+const PlayerProfile = ({ player, transactions = [], onClose, onUpdate }) => {
+  const [activeTab, setActiveTab] = useState('overview');
+  const [showAddTransaction, setShowAddTransaction] = useState(false);
+  const [transactionType, setTransactionType] = useState('payment');
   const [amount, setAmount] = useState('');
-  const [note, setNote] = useState('');
-  const [operationType, setOperationType] = useState('add');
-  const [loading, setLoading] = useState(false);
+  const [description, setDescription] = useState('');
+  const [processing, setProcessing] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [newName, setNewName] = useState(player.name);
 
-  const { user } = useAuth();
-  
-  // Filtrar transações do jogador
-  const playerTransactions = transactions.filter(t => t.playerId === player.id);
-  
   // Calcular estatísticas
-  const contributionToTotal = Math.max(0, -player.balance);
-  const totalPayments = playerTransactions
-    .filter(t => t.type === 'payment')
+  const playerTransactions = transactions.filter(t => t.playerId === player.id);
+  const totalReceived = playerTransactions
+    .filter(t => t.amount > 0)
     .reduce((sum, t) => sum + t.amount, 0);
-  const totalDebts = playerTransactions
-    .filter(t => t.type === 'debt')
-    .reduce((sum, t) => sum + t.amount, 0);
+  const totalPaid = playerTransactions
+    .filter(t => t.amount < 0)
+    .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  const currentBalance = player.balance || 0;
+  const isDebtor = currentBalance < 0;
+  const isCreditor = currentBalance > 0;
 
-  // FUNÇÃO CORRIGIDA: Ações Rápidas (incluindo Quitar Dívidas)
-  const handleQuickAction = async (type, value, description) => {
-    setLoading(true);
-    try {
-      let newBalance;
-      let transactionType;
-      let transactionAmount;
-      
-      // Processar diferentes tipos de ação
-      if (type === 'pay_entry') {
-        // Pagar quota de entrada
-        newBalance = player.balance + settings.entryFee;
-        transactionType = 'payment';
-        transactionAmount = settings.entryFee;
-        description = description || `Pagamento da quota de entrada (${settings.entryFee}€)`;
-        
-      } else if (type === 'add_penalty') {
-        // Adicionar penalização
-        newBalance = player.balance - value;
-        transactionType = 'debt';
-        transactionAmount = value;
-        description = description || `Penalização aplicada (${value}€)`;
-        
-      } else if (type === 'clear_debt') {
-        // CORREÇÃO PRINCIPAL: Quitar todas as dívidas
-        if (player.balance >= 0) {
-          alert('✅ O jogador não tem dívidas para quitar!');
-          setLoading(false);
-          return;
-        }
-        
-        // Confirmação antes de quitar
-        const debtAmount = Math.abs(player.balance);
-        const confirm = window.confirm(
-          `💰 Confirma o pagamento de ${debtAmount.toFixed(2)}€?\n\n` +
-          `Esta ação irá:\n` +
-          `• Quitar todas as dívidas do jogador\n` +
-          `• Definir o saldo para 0.00€\n` +
-          `• Registrar a transação no histórico\n\n` +
-          `Confirmar pagamento?`
-        );
-        
-        if (!confirm) {
-          setLoading(false);
-          return;
-        }
-        
-        // Calcular valores corretos
-        transactionAmount = debtAmount;
-        newBalance = 0;
-        transactionType = 'payment';
-        description = `Quitação total de dívidas - Valor pago: ${transactionAmount.toFixed(2)}€`;
-      }
-
-      console.log('💰 Quick action:', { 
-        type, 
-        oldBalance: player.balance, 
-        newBalance, 
-        transactionAmount,
-        description 
-      });
-
-      // IMPORTANTE: Criar a transação PRIMEIRO (para manter histórico)
-      const transactionResult = await firestoreService.addTransaction({
-        playerId: player.id,
-        playerName: player.name,
-        type: transactionType,
-        amount: transactionAmount,
-        note: description,
-        balanceAfter: newBalance,
-        timestamp: new Date().toISOString(),
-        createdBy: user?.uid || 'anonymous'
-      });
-
-      console.log('📝 Transaction created:', transactionResult);
-
-      if (!transactionResult.success) {
-        throw new Error('Falha ao criar transação');
-      }
-
-      // Atualizar o jogador
-      const updatedPlayer = {
-        ...player,
-        balance: newBalance,
-        paid: newBalance >= 0,  // Marcar como pago se saldo >= 0
-        lastUpdated: new Date().toISOString()
-      };
-
-      console.log('💾 Updating player:', updatedPlayer);
-
-      // Salvar no Firebase
-      const saveResult = await firestoreService.savePlayer(updatedPlayer);
-      
-      if (!saveResult.success) {
-        throw new Error(saveResult.error || 'Falha ao atualizar jogador');
-      }
-
-      console.log('✅ Player updated successfully');
-
-      // Atualizar estado no componente pai
-      await onUpdatePlayer(updatedPlayer);
-      
-      // Notificação de sucesso com detalhes
-      alert(
-        `✅ Operação concluída com sucesso!\n\n` +
-        `📝 ${description}\n` +
-        `💰 Saldo anterior: ${player.balance.toFixed(2)}€\n` +
-        `💵 Novo saldo: ${newBalance.toFixed(2)}€\n` +
-        `${newBalance >= 0 ? '✅ Jogador em dia!' : '⚠️ Jogador com dívida'}`
-      );
-      
-    } catch (error) {
-      console.error('❌ Error in quick action:', error);
-      alert(`❌ Erro ao executar ação: ${error.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // FUNÇÃO CORRIGIDA: Transação Personalizada
-  const handleCustomTransaction = async () => {
+  // ========== FUNÇÕES DE GESTÃO DE DÍVIDAS ==========
+  
+  // Adicionar dívida
+  const handleAddDebt = async () => {
     if (!amount || parseFloat(amount) <= 0) {
-      alert('❌ Por favor insere um valor válido (maior que 0)');
+      alert('Por favor, insere um valor válido');
       return;
     }
 
-    setLoading(true);
+    setProcessing(true);
     try {
-      const value = parseFloat(amount);
-      const newBalance = operationType === 'add' 
-        ? player.balance + value 
-        : player.balance - value;
-
-      // Confirmação para valores altos
-      if (value > 100) {
-        const confirm = window.confirm(
-          `⚠️ Valor elevado: ${value.toFixed(2)}€\n\n` +
-          `Confirma a ${operationType === 'add' ? 'adição' : 'subtração'} deste valor?`
-        );
-        if (!confirm) {
-          setLoading(false);
-          return;
-        }
-      }
-
-      console.log('💳 Custom transaction:', { 
-        operationType, 
-        value, 
-        oldBalance: player.balance, 
-        newBalance 
-      });
-
-      // Criar a transação
-      const transactionResult = await firestoreService.addTransaction({
-        playerId: player.id,
-        playerName: player.name,
-        type: operationType === 'add' ? 'payment' : 'debt',
-        amount: value,
-        note: note || (operationType === 'add' 
-          ? `Pagamento personalizado de ${value.toFixed(2)}€` 
-          : `Dívida adicionada de ${value.toFixed(2)}€`),
-        balanceAfter: newBalance,
-        timestamp: new Date().toISOString(),
-        createdBy: user?.uid || 'anonymous'
-      });
-
-      console.log('📝 Transaction created:', transactionResult);
-
-      if (!transactionResult.success) {
-        throw new Error('Falha ao criar transação');
-      }
-
-      // Atualizar o jogador
-      const updatedPlayer = {
-        ...player,
-        balance: newBalance,
-        paid: newBalance >= 0,
-        lastUpdated: new Date().toISOString()
-      };
-
-      console.log('💾 Updating player:', updatedPlayer);
-
-      // Salvar no Firebase
-      const saveResult = await firestoreService.savePlayer(updatedPlayer);
-      
-      if (!saveResult.success) {
-        throw new Error(saveResult.error || 'Falha ao atualizar jogador');
-      }
-
-      console.log('✅ Player updated successfully');
-
-      // Atualizar estado no componente pai
-      await onUpdatePlayer(updatedPlayer);
-      
-      // Limpar formulário
-      setAmount('');
-      setNote('');
-      
-      // Notificar sucesso
-      alert(
-        `✅ Transação concluída!\n\n` +
-        `${operationType === 'add' ? '💰 Pagamento' : '💸 Dívida'}: ${value.toFixed(2)}€\n` +
-        `📝 ${note || 'Sem descrição'}\n` +
-        `💵 Novo saldo: ${newBalance.toFixed(2)}€`
+      const result = await firestoreService.addDebt(
+        player.id,
+        parseFloat(amount),
+        description || 'Taxa/Multa adicionada'
       );
-      
+
+      if (result.success) {
+        alert(`✅ Dívida adicionada! Novo saldo: ${result.newBalance.toFixed(2)}€`);
+        
+        // Atualizar estado local
+        const updatedPlayer = {
+          ...player,
+          balance: result.newBalance
+        };
+        onUpdate(updatedPlayer);
+        
+        // Limpar formulário
+        setAmount('');
+        setDescription('');
+        setShowAddTransaction(false);
+      } else {
+        alert(`❌ Erro: ${result.error}`);
+      }
     } catch (error) {
-      console.error('❌ Error in custom transaction:', error);
-      alert(`❌ Erro ao processar transação: ${error.message}`);
+      alert(`❌ Erro: ${error.message}`);
     } finally {
-      setLoading(false);
+      setProcessing(false);
     }
   };
 
-  // Formatar data
-  const formatDate = (dateString) => {
-    if (!dateString) return 'Data desconhecida';
-    const date = new Date(dateString);
-    return date.toLocaleString('pt-PT', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+  // Registar pagamento
+  const handlePayDebt = async () => {
+    if (!amount || parseFloat(amount) <= 0) {
+      alert('Por favor, insere um valor válido');
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const result = await firestoreService.payDebt(
+        player.id,
+        parseFloat(amount),
+        description || 'Pagamento de dívida'
+      );
+
+      if (result.success) {
+        alert(`✅ Pagamento registado! Novo saldo: ${result.newBalance.toFixed(2)}€`);
+        
+        // Atualizar estado local
+        const updatedPlayer = {
+          ...player,
+          balance: result.newBalance
+        };
+        onUpdate(updatedPlayer);
+        
+        // Limpar formulário
+        setAmount('');
+        setDescription('');
+        setShowAddTransaction(false);
+      } else {
+        alert(`❌ Erro: ${result.error}`);
+      }
+    } catch (error) {
+      alert(`❌ Erro: ${error.message}`);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  // Quitar dívida completa
+  const handleSettleDebt = async () => {
+    if (!isDebtor) {
+      alert('Este jogador não tem dívidas!');
+      return;
+    }
+
+    const confirmSettle = window.confirm(
+      `Quitar dívida completa de ${Math.abs(currentBalance).toFixed(2)}€?`
+    );
+    
+    if (!confirmSettle) return;
+
+    setProcessing(true);
+    try {
+      const result = await firestoreService.settleDebt(
+        player.id,
+        'Quitação completa da dívida'
+      );
+
+      if (result.success) {
+        if (result.settledAmount) {
+          alert(`✅ Dívida quitada! Total pago: ${result.settledAmount.toFixed(2)}€`);
+        } else {
+          alert('✅ Não havia dívidas para quitar');
+        }
+        
+        // Atualizar jogador com saldo zero
+        const updatedPlayer = {
+          ...player,
+          balance: result.newBalance
+        };
+        onUpdate(updatedPlayer);
+      } else {
+        alert(`❌ Erro: ${result.error}`);
+      }
+    } catch (error) {
+      alert(`❌ Erro: ${error.message}`);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  // Processar transação (dívida ou pagamento)
+  const handleProcessTransaction = async () => {
+    if (transactionType === 'payment') {
+      await handlePayDebt();
+    } else {
+      await handleAddDebt();
+    }
+  };
+
+  // Atualizar nome do jogador
+  const handleUpdateName = async () => {
+    if (!newName || newName.trim() === player.name) {
+      setEditingName(false);
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const result = await firestoreService.updatePlayer(player.id, {
+        name: newName.trim()
+      });
+
+      if (result.success) {
+        const updatedPlayer = { ...player, name: newName.trim() };
+        onUpdate(updatedPlayer);
+        setEditingName(false);
+      } else {
+        alert(`❌ Erro: ${result.error}`);
+      }
+    } catch (error) {
+      alert(`❌ Erro: ${error.message}`);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  // Eliminar jogador
+  const handleDeletePlayer = async () => {
+    const confirmDelete = window.confirm(
+      `⚠️ Eliminar ${player.name}? Esta ação não pode ser desfeita!`
+    );
+    
+    if (!confirmDelete) return;
+
+    setProcessing(true);
+    try {
+      const result = await firestoreService.deletePlayer(player.id);
+
+      if (result.success) {
+        alert('✅ Jogador eliminado');
+        onClose();
+        window.location.reload();
+      } else {
+        alert(`❌ Erro: ${result.error}`);
+      }
+    } catch (error) {
+      alert(`❌ Erro: ${error.message}`);
+    } finally {
+      setProcessing(false);
+    }
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <button
-          onClick={onBack}
-          className="flex items-center text-gray-600 hover:text-gray-800 transition-colors"
-        >
-          <ArrowLeft className="h-5 w-5 mr-2" />
-          Voltar
-        </button>
-        <div className="text-right">
-          <p className="text-sm text-gray-500">Última atualização</p>
-          <p className="text-xs text-gray-400">{formatDate(player.lastUpdated)}</p>
-        </div>
-      </div>
-
-      {/* Player Info */}
-      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center space-x-4">
-            <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center text-white text-2xl font-bold">
-              {player.name.charAt(0).toUpperCase()}
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-800">{player.name}</h1>
-              <p className="text-sm text-gray-500">
-                Membro desde {new Date(player.createdAt || Date.now()).toLocaleDateString('pt-PT')}
-              </p>
-            </div>
-          </div>
-          <div className={`px-4 py-2 rounded-full ${
-            player.balance >= 0 
-              ? 'bg-green-100 text-green-800' 
-              : 'bg-red-100 text-red-800'
-          }`}>
-            {player.balance >= 0 ? '✅ Em dia' : '⚠️ Com dívida'}
-          </div>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-gray-50 rounded-lg p-4 text-center">
-            <p className="text-sm text-gray-600">Saldo Atual</p>
-            <div className="flex items-center justify-center space-x-2">
-              {player.balance >= 0 ? (
-                <TrendingUp className="h-5 w-5 text-green-600" />
-              ) : (
-                <TrendingDown className="h-5 w-5 text-red-600" />
-              )}
-              <p className={`text-xl font-bold ${
-                player.balance >= 0 ? 'text-green-600' : 'text-red-600'
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 bg-black bg-opacity-50" onClick={onClose} />
+      
+      <div className="relative bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden">
+        {/* Header */}
+        <div className={`p-6 border-b ${isDebtor ? 'bg-red-50' : isCreditor ? 'bg-green-50' : 'bg-gray-50'}`}>
+          <div className="flex items-start justify-between">
+            <div className="flex items-center space-x-4">
+              <div className={`h-16 w-16 rounded-full flex items-center justify-center text-2xl font-bold ${
+                isDebtor ? 'bg-red-200 text-red-700' : 
+                isCreditor ? 'bg-green-200 text-green-700' : 
+                'bg-gray-200 text-gray-700'
               }`}>
-                {player.balance >= 0 ? '+' : ''}{player.balance.toFixed(2)}€
-              </p>
-            </div>
-          </div>
-          
-          <div className="bg-gray-50 rounded-lg p-4 text-center">
-            <p className="text-sm text-gray-600">Total de Pontos</p>
-            <div className="flex items-center justify-center space-x-2">
-              <Trophy className="h-5 w-5 text-blue-600" />
-              <p className="text-xl font-bold text-blue-600">
-                {player.totalPoints || 0}
-              </p>
-            </div>
-            <p className="text-xs text-gray-500">
-              {player.totalRounds || 0} rondas jogadas
-            </p>
-          </div>
-          
-          <div className="bg-gray-50 rounded-lg p-4 text-center">
-            <p className="text-sm text-gray-600">Contribuição p/ Pote</p>
-            <div className="flex items-center justify-center space-x-2">
-              <DollarSign className="h-5 w-5 text-blue-600" />
-              <p className="text-xl font-bold text-blue-600">
-                {contributionToTotal.toFixed(2)}€
-              </p>
-            </div>
-            <p className="text-xs text-gray-500">
-              Total do pote: {totalPot.toFixed(2)}€
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Quick Actions */}
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center">
-            <Calculator className="h-5 w-5 mr-2" />
-            🎯 Ações Rápidas
-          </h2>
-
-          <div className="space-y-3 mb-6">
-            {/* Botão Pagar Quota - só aparece se tem dívida */}
-            {player.balance < 0 && (
-              <button
-                onClick={() => handleQuickAction('pay_entry', settings.entryFee, 'Pagamento da quota de entrada')}
-                disabled={loading}
-                className="w-full bg-green-600 text-white p-3 rounded-lg hover:bg-green-700 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="flex justify-between items-center">
-                  <span>💰 Pagar Quota de Entrada</span>
-                  <span className="font-bold">+{settings.entryFee}€</span>
-                </div>
-                <p className="text-green-100 text-sm mt-1">
-                  Saldo ficará: {(player.balance + settings.entryFee).toFixed(2)}€
+                {player.name.substring(0, 2).toUpperCase()}
+              </div>
+              
+              <div>
+                {editingName ? (
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="text"
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      className="px-2 py-1 border rounded"
+                      autoFocus
+                    />
+                    <button
+                      onClick={handleUpdateName}
+                      className="px-2 py-1 bg-green-600 text-white rounded text-sm"
+                      disabled={processing}
+                    >
+                      Guardar
+                    </button>
+                    <button
+                      onClick={() => {
+                        setNewName(player.name);
+                        setEditingName(false);
+                      }}
+                      className="px-2 py-1 bg-gray-600 text-white rounded text-sm"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-2">
+                    <h2 className="text-2xl font-bold">{player.name}</h2>
+                    <button
+                      onClick={() => setEditingName(true)}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
+                      <Edit className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
+                
+                <p className={`text-lg font-medium mt-1 ${
+                  isDebtor ? 'text-red-600' : 
+                  isCreditor ? 'text-green-600' : 
+                  'text-gray-600'
+                }`}>
+                  Saldo: {currentBalance >= 0 ? '+' : ''}{currentBalance.toFixed(2)}€
                 </p>
+              </div>
+            </div>
+            
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+              <X className="h-6 w-6" />
+            </button>
+          </div>
+
+          {/* Quick Actions */}
+          <div className="flex flex-wrap gap-2 mt-4">
+            {isDebtor && (
+              <button
+                onClick={handleSettleDebt}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2"
+                disabled={processing}
+              >
+                <CheckCircle className="h-4 w-4" />
+                <span>Quitar Dívida ({Math.abs(currentBalance).toFixed(2)}€)</span>
               </button>
             )}
             
-            {/* Botão Adicionar Penalização */}
             <button
-              onClick={() => handleQuickAction('add_penalty', 5, 'Penalização por atraso/falta')}
-              disabled={loading}
-              className="w-full bg-orange-600 text-white p-3 rounded-lg hover:bg-orange-700 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => setShowAddTransaction(true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+              disabled={processing}
             >
-              <div className="flex justify-between items-center">
-                <span>⚠️ Adicionar Penalização</span>
-                <span className="font-bold">-5€</span>
-              </div>
-              <p className="text-orange-100 text-sm mt-1">
-                Saldo ficará: {(player.balance - 5).toFixed(2)}€
-              </p>
+              <Plus className="h-4 w-4" />
+              <span>Nova Transação</span>
             </button>
             
-            {/* BOTÃO CORRIGIDO: Quitar Todas as Dívidas */}
-            {player.balance < 0 && (
-              <button
-                onClick={() => handleQuickAction('clear_debt', 0, 'Todas as dívidas foram pagas')}
-                disabled={loading}
-                className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="flex justify-between items-center">
-                  <span>✅ Quitar Todas as Dívidas</span>
-                  <span className="font-bold">+{Math.abs(player.balance).toFixed(2)}€</span>
-                </div>
-                <p className="text-blue-100 text-sm mt-1">
-                  Saldo ficará: 0.00€ (Em dia!)
-                </p>
-              </button>
-            )}
+            <button
+              onClick={handleDeletePlayer}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center space-x-2"
+              disabled={processing}
+            >
+              <Trash2 className="h-4 w-4" />
+              <span>Eliminar</span>
+            </button>
+          </div>
+        </div>
 
-            {/* Mensagem quando não há dívidas */}
-            {player.balance >= 0 && (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <div className="flex items-center space-x-2">
-                  <AlertCircle className="h-5 w-5 text-green-600" />
-                  <p className="text-green-800">
-                    ✅ Jogador em dia! Não há dívidas para quitar.
+        {/* Tabs */}
+        <div className="border-b">
+          <div className="flex">
+            <button
+              onClick={() => setActiveTab('overview')}
+              className={`px-6 py-3 font-medium ${
+                activeTab === 'overview' 
+                  ? 'border-b-2 border-blue-600 text-blue-600' 
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Resumo
+            </button>
+            <button
+              onClick={() => setActiveTab('transactions')}
+              className={`px-6 py-3 font-medium ${
+                activeTab === 'transactions' 
+                  ? 'border-b-2 border-blue-600 text-blue-600' 
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Transações ({playerTransactions.length})
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 overflow-y-auto max-h-[400px]">
+          {activeTab === 'overview' && (
+            <div className="space-y-6">
+              {/* Statistics */}
+              <div className="grid grid-cols-3 gap-4">
+                <div className="text-center p-4 bg-gray-50 rounded-lg">
+                  <TrendingUp className="h-8 w-8 text-green-600 mx-auto mb-2" />
+                  <p className="text-sm text-gray-500">Total Recebido</p>
+                  <p className="text-xl font-bold text-green-600">
+                    {totalReceived.toFixed(2)}€
+                  </p>
+                </div>
+                
+                <div className="text-center p-4 bg-gray-50 rounded-lg">
+                  <TrendingDown className="h-8 w-8 text-red-600 mx-auto mb-2" />
+                  <p className="text-sm text-gray-500">Total Pago</p>
+                  <p className="text-xl font-bold text-red-600">
+                    {totalPaid.toFixed(2)}€
+                  </p>
+                </div>
+                
+                <div className="text-center p-4 bg-gray-50 rounded-lg">
+                  <Euro className={`h-8 w-8 mx-auto mb-2 ${
+                    isDebtor ? 'text-red-600' : 
+                    isCreditor ? 'text-green-600' : 
+                    'text-gray-600'
+                  }`} />
+                  <p className="text-sm text-gray-500">Saldo Atual</p>
+                  <p className={`text-xl font-bold ${
+                    isDebtor ? 'text-red-600' : 
+                    isCreditor ? 'text-green-600' : 
+                    'text-gray-600'
+                  }`}>
+                    {currentBalance >= 0 ? '+' : ''}{currentBalance.toFixed(2)}€
                   </p>
                 </div>
               </div>
-            )}
-          </div>
 
-          {/* Custom Transaction */}
-          <div className="border-t pt-6">
-            <h3 className="font-semibold text-gray-800 mb-3">💳 Transação Personalizada</h3>
-            
+              {/* Status */}
+              <div className={`p-4 rounded-lg flex items-center space-x-3 ${
+                isDebtor ? 'bg-red-50 border border-red-200' : 
+                isCreditor ? 'bg-green-50 border border-green-200' : 
+                'bg-gray-50 border border-gray-200'
+              }`}>
+                {isDebtor ? (
+                  <>
+                    <AlertCircle className="h-6 w-6 text-red-600" />
+                    <div>
+                      <p className="font-medium text-red-900">Jogador com Dívida</p>
+                      <p className="text-sm text-red-700">
+                        Deve pagar {Math.abs(currentBalance).toFixed(2)}€ para regularizar
+                      </p>
+                    </div>
+                  </>
+                ) : isCreditor ? (
+                  <>
+                    <CheckCircle className="h-6 w-6 text-green-600" />
+                    <div>
+                      <p className="font-medium text-green-900">Jogador com Crédito</p>
+                      <p className="text-sm text-green-700">
+                        Tem {currentBalance.toFixed(2)}€ a receber
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="h-6 w-6 text-gray-600" />
+                    <div>
+                      <p className="font-medium text-gray-900">Situação Regularizada</p>
+                      <p className="text-sm text-gray-700">Sem dívidas ou créditos</p>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Recent Activity */}
+              <div>
+                <h3 className="font-medium mb-3">Atividade Recente</h3>
+                <div className="space-y-2">
+                  {playerTransactions.slice(0, 3).map((transaction, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded">
+                      <div className="flex items-center space-x-3">
+                        {transaction.amount > 0 ? (
+                          <TrendingUp className="h-5 w-5 text-green-600" />
+                        ) : (
+                          <TrendingDown className="h-5 w-5 text-red-600" />
+                        )}
+                        <div>
+                          <p className="text-sm font-medium">{transaction.description}</p>
+                          <p className="text-xs text-gray-500">
+                            {new Date(transaction.date).toLocaleDateString('pt-PT')}
+                          </p>
+                        </div>
+                      </div>
+                      <p className={`font-medium ${
+                        transaction.amount > 0 ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {transaction.amount > 0 ? '+' : ''}{transaction.amount.toFixed(2)}€
+                      </p>
+                    </div>
+                  ))}
+                  
+                  {playerTransactions.length === 0 && (
+                    <p className="text-gray-500 text-center py-4">Sem transações</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'transactions' && (
             <div className="space-y-3">
-              <select
-                value={operationType}
-                onChange={(e) => setOperationType(e.target.value)}
-                disabled={loading}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-              >
-                <option value="add">➕ Adicionar Dinheiro (Pagamento)</option>
-                <option value="subtract">➖ Subtrair Dinheiro (Dívida)</option>
-              </select>
+              {playerTransactions.map((transaction, idx) => (
+                <div key={idx} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100">
+                  <div className="flex items-center space-x-3">
+                    {transaction.amount > 0 ? (
+                      <div className="h-10 w-10 bg-green-100 rounded-full flex items-center justify-center">
+                        <TrendingUp className="h-5 w-5 text-green-600" />
+                      </div>
+                    ) : (
+                      <div className="h-10 w-10 bg-red-100 rounded-full flex items-center justify-center">
+                        <TrendingDown className="h-5 w-5 text-red-600" />
+                      </div>
+                    )}
+                    <div>
+                      <p className="font-medium">{transaction.description || transaction.type}</p>
+                      <p className="text-sm text-gray-500">
+                        {new Date(transaction.date).toLocaleString('pt-PT')}
+                      </p>
+                    </div>
+                  </div>
+                  <p className={`text-lg font-bold ${
+                    transaction.amount > 0 ? 'text-green-600' : 'text-red-600'
+                  }`}>
+                    {transaction.amount > 0 ? '+' : ''}{transaction.amount.toFixed(2)}€
+                  </p>
+                </div>
+              ))}
               
-              <input
-                type="number"
-                step="0.01"
-                min="0.01"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                disabled={loading}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-                placeholder="Valor em euros (ex: 10.50)"
-              />
-              
-              <input
-                type="text"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                disabled={loading}
-                maxLength={100}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-                placeholder="Descrição da transação (opcional)"
-              />
-              
-              {/* Preview do resultado */}
+              {playerTransactions.length === 0 && (
+                <div className="text-center py-8">
+                  <History className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500">Sem transações registadas</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Add Transaction Modal */}
+        {showAddTransaction && (
+          <div className="absolute inset-0 bg-white z-50">
+            <div className="p-6 border-b">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold">Nova Transação</h3>
+                <button 
+                  onClick={() => setShowAddTransaction(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              {/* Transaction Type */}
+              <div>
+                <label className="block text-sm font-medium mb-2">Tipo de Transação</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => setTransactionType('payment')}
+                    className={`p-3 rounded-lg border-2 transition-colors ${
+                      transactionType === 'payment'
+                        ? 'border-green-600 bg-green-50 text-green-700'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <Plus className="h-5 w-5 mx-auto mb-1" />
+                    <span className="text-sm font-medium">Pagamento</span>
+                    <p className="text-xs mt-1 text-gray-600">Reduz a dívida</p>
+                  </button>
+                  
+                  <button
+                    onClick={() => setTransactionType('debt')}
+                    className={`p-3 rounded-lg border-2 transition-colors ${
+                      transactionType === 'debt'
+                        ? 'border-red-600 bg-red-50 text-red-700'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <Minus className="h-5 w-5 mx-auto mb-1" />
+                    <span className="text-sm font-medium">Adicionar Dívida</span>
+                    <p className="text-xs mt-1 text-gray-600">Aumenta a dívida</p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Amount */}
+              <div>
+                <label className="block text-sm font-medium mb-2">Valor (€)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="0.00"
+                />
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className="block text-sm font-medium mb-2">Descrição (opcional)</label>
+                <input
+                  type="text"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder={transactionType === 'payment' ? 'Pagamento de dívida' : 'Taxa semanal'}
+                />
+              </div>
+
+              {/* Preview */}
               {amount && parseFloat(amount) > 0 && (
-                <div className="p-3 bg-gray-50 rounded-lg text-sm">
-                  <p className="font-semibold mb-2">📊 Previsão:</p>
-                  <p>Saldo atual: 
-                    <span className={`font-bold ml-2 ${
-                      player.balance >= 0 ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {player.balance.toFixed(2)}€
-                    </span>
-                  </p>
-                  <p>Operação: 
-                    <span className={`font-bold ml-2 ${
-                      operationType === 'add' ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {operationType === 'add' ? '+' : '-'}{parseFloat(amount).toFixed(2)}€
-                    </span>
-                  </p>
-                  <p className="border-t pt-2 mt-2">Saldo após operação: 
-                    <span className={`font-bold ml-2 ${
-                      (operationType === 'add' 
-                        ? player.balance + parseFloat(amount) 
-                        : player.balance - parseFloat(amount)) >= 0 
-                        ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {(operationType === 'add' 
-                        ? player.balance + parseFloat(amount || 0) 
-                        : player.balance - parseFloat(amount || 0)
-                      ).toFixed(2)}€
-                    </span>
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-800">
+                    <strong>Saldo atual:</strong> {currentBalance.toFixed(2)}€<br/>
+                    <strong>Transação:</strong> {transactionType === 'payment' ? '+' : '-'}{parseFloat(amount).toFixed(2)}€<br/>
+                    <strong>Novo saldo:</strong> {
+                      transactionType === 'payment' 
+                        ? (currentBalance + parseFloat(amount)).toFixed(2)
+                        : (currentBalance - parseFloat(amount)).toFixed(2)
+                    }€
                   </p>
                 </div>
               )}
-              
-              <button
-                onClick={handleCustomTransaction}
-                disabled={!amount || parseFloat(amount) <= 0 || loading}
-                className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center"
-              >
-                {loading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                    A processar...
-                  </>
-                ) : (
-                  '✅ Confirmar Transação'
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
 
-        {/* Transaction History */}
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center">
-            <Clock className="h-5 w-5 mr-2" />
-            📋 Histórico de Transações
-          </h2>
-
-          {/* Summary Stats */}
-          <div className="grid grid-cols-2 gap-4 mb-4 p-3 bg-gray-50 rounded-lg">
-            <div className="text-center">
-              <p className="text-xs text-gray-600">Total Pago</p>
-              <p className="text-lg font-bold text-green-600">
-                +{totalPayments.toFixed(2)}€
-              </p>
-            </div>
-            <div className="text-center">
-              <p className="text-xs text-gray-600">Total Devido</p>
-              <p className="text-lg font-bold text-red-600">
-                -{totalDebts.toFixed(2)}€
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-3 max-h-96 overflow-y-auto">
-            {playerTransactions.length > 0 ? (
-              playerTransactions
-                .slice()
-                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-                .map((transaction) => (
-                  <div 
-                    key={transaction.id} 
-                    className="p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-1">
-                          <span className={`px-2 py-1 rounded text-xs font-medium ${
-                            transaction.type === 'payment' 
-                              ? 'bg-green-100 text-green-800' 
-                              : transaction.type === 'debt' 
-                                ? 'bg-red-100 text-red-800'
-                                : transaction.type === 'removal'
-                                  ? 'bg-gray-100 text-gray-800'
-                                  : 'bg-blue-100 text-blue-800'
-                          }`}>
-                            {transaction.type === 'payment' ? '💰 Pagamento' : 
-                             transaction.type === 'debt' ? '💸 Dívida' :
-                             transaction.type === 'removal' ? '🗑️ Remoção' : 
-                             '🔄 Alteração'}
-                          </span>
-                          <span className="text-xs text-gray-500">
-                            {formatDate(transaction.timestamp)}
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-700">{transaction.note}</p>
-                        {transaction.roundId && (
-                          <p className="text-xs text-gray-500 mt-1">
-                            🎯 Ronda: {transaction.roundId}
-                          </p>
-                        )}
-                        {transaction.createdBy && (
-                          <p className="text-xs text-gray-500 mt-1">
-                            👤 Por: {transaction.createdBy === user?.uid ? 'Você' : 'Admin'}
-                          </p>
-                        )}
-                      </div>
-                      <div className="text-right ml-4">
-                        <div className={`font-bold text-lg ${
-                          transaction.type === 'payment' ? 'text-green-600' : 
-                          transaction.type === 'debt' ? 'text-red-600' : 'text-gray-600'
-                        }`}>
-                          {transaction.type === 'payment' ? '+' : 
-                           transaction.type === 'debt' ? '-' : ''}
-                          {transaction.amount.toFixed(2)}€
-                        </div>
-                        <p className="text-xs text-gray-500">
-                          Saldo: {(transaction.balanceAfter || 0).toFixed(2)}€
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))
-            ) : (
-              <div className="text-center py-8">
-                <Clock className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-                <p className="text-gray-500">Ainda não há transações</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  As transações aparecerão aqui quando forem realizadas
-                </p>
+              {/* Action Buttons */}
+              <div className="flex space-x-3 pt-4">
+                <button
+                  onClick={() => setShowAddTransaction(false)}
+                  className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                  disabled={processing}
+                >
+                  Cancelar
+                </button>
+                
+                <button
+                  onClick={handleProcessTransaction}
+                  className={`flex-1 px-4 py-2 rounded-lg text-white font-medium disabled:bg-gray-400 ${
+                    transactionType === 'payment'
+                      ? 'bg-green-600 hover:bg-green-700'
+                      : 'bg-red-600 hover:bg-red-700'
+                  }`}
+                  disabled={processing || !amount || parseFloat(amount) <= 0}
+                >
+                  {processing ? 'Processando...' : 
+                   transactionType === 'payment' ? 'Registar Pagamento' : 'Adicionar Dívida'}
+                </button>
               </div>
-            )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
