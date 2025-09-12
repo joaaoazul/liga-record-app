@@ -1,4 +1,4 @@
-// src/components/dashboard/FullDesktopDashboard.js
+// src/components/dashboard/FullDesktopDashboard.js 
 import React, { useState, useEffect } from 'react';
 import { 
   Trophy, Users, Euro, Plus, Settings, Search, Filter,
@@ -14,16 +14,29 @@ import { useAuth } from '../../hooks/useAuth';
 import { firestoreService } from '../../services/firebase';
 import PlayerProfile from '../players/PlayerProfile';
 import RoundsManager from '../rounds/RoundsManager';
+import SettingsPage from '../configs/config';
 import FinancialReport from '../financial/FinancialReport';
+
+// Função auxiliar para garantir que um valor seja número
+const safeNumber = (value, defaultValue = 0) => {
+  const num = Number(value);
+  return isNaN(num) || !isFinite(num) ? defaultValue : num;
+};
+
+// Função auxiliar para formatar valores com toFixed de forma segura
+const safeToFixed = (value, decimals = 2, defaultValue = 0) => {
+  const num = safeNumber(value, defaultValue);
+  return num.toFixed(decimals);
+};
 
 const FullDesktopDashboard = () => {
   const [players, setPlayers] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [settings, setSettings] = useState({
-    entryFee: 20,
-    weeklyPayment: 5,
-    dinnerPotGoal: 200,
+    entryFee: 10,
+    weeklyPayment: 12,
+    dinnerPotGoal: 500,
     distributionPercentages: [40, 30, 20, 10]
   });
   const [loading, setLoading] = useState(true);
@@ -65,21 +78,24 @@ const FullDesktopDashboard = () => {
     }
   };
 
-  // Calculate all stats
+  // Calculate all stats - CORRIGIDO COM VALIDAÇÕES
   const stats = {
     totalPlayers: players.length,
     paidPlayers: players.filter(p => p.paid).length,
     unpaidPlayers: players.filter(p => !p.paid).length,
-    totalBalance: players.reduce((sum, p) => sum + (p.balance || 0), 0),
-    totalCredit: players.reduce((sum, p) => sum + Math.max(0, p.balance || 0), 0),
-    totalDebt: Math.abs(players.reduce((sum, p) => sum + Math.min(0, p.balance || 0), 0)),
-    dinnerPot: Math.abs(players.reduce((sum, p) => sum + (p.balance || 0), 0)),
-    totalPoints: players.reduce((sum, p) => sum + (p.totalPoints || 0), 0),
-    averagePoints: players.length > 0 ? (players.reduce((sum, p) => sum + (p.totalPoints || 0), 0) / players.length).toFixed(1) : '0.0',
+    // CORREÇÃO: Garantir que todos os valores sejam números válidos
+    totalBalance: safeNumber(players.reduce((sum, p) => sum + safeNumber(p.balance), 0)),
+    totalCredit: safeNumber(players.reduce((sum, p) => sum + Math.max(0, safeNumber(p.balance)), 0)),
+    totalDebt: Math.abs(safeNumber(players.reduce((sum, p) => sum + Math.min(0, safeNumber(p.balance)), 0))),
+    dinnerPot: Math.abs(safeNumber(players.reduce((sum, p) => sum + safeNumber(p.balance), 0))),
+    totalPoints: safeNumber(players.reduce((sum, p) => sum + safeNumber(p.totalPoints), 0)),
+    averagePoints: players.length > 0 ? 
+      safeToFixed(safeNumber(players.reduce((sum, p) => sum + safeNumber(p.totalPoints), 0)) / players.length, 1) : '0.0',
     totalRounds: rounds.length,
-    activePercentage: players.length > 0 ? ((players.filter(p => p.paid).length / players.length) * 100).toFixed(0) : 0,
+    activePercentage: players.length > 0 ? 
+      safeToFixed((players.filter(p => p.paid).length / players.length) * 100, 0) : '0',
     lastTransaction: transactions[0]?.date ? new Date(transactions[0].date).toLocaleDateString('pt-PT') : 'N/A',
-    topPlayer: players.sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0))[0]?.name || 'N/A',
+    topPlayer: players.sort((a, b) => safeNumber(b.totalPoints) - safeNumber(a.totalPoints))[0]?.name || 'N/A',
     weeklyGrowth: 12.5, // Mock data
     monthlyGrowth: 28.3 // Mock data
   };
@@ -93,29 +109,31 @@ const FullDesktopDashboard = () => {
 
   const potStatus = getPotStatus();
 
-  // Filter players
-const filteredPlayers = players.filter(player => {
-  // Verificar se o jogador existe e tem nome
-  if (!player || !player.name) {
-    console.warn('Jogador inválido encontrado:', player);
-    return false;
-  }
-  
-  // Garantir que searchQuery é string
-  const searchTerm = (searchQuery || '').toLowerCase();
-  const playerName = player.name.toLowerCase();
-  
-  const matchesSearch = playerName.includes(searchTerm);
-  
-  const matchesFilter =
-    filterStatus === 'Todos' ||
-    (filterStatus === 'Pagos' && player.paid) ||
-    (filterStatus === 'Por Pagar' && !player.paid) ||
-    (filterStatus === 'Devedores' && (player.balance || 0) < 0) ||
-    (filterStatus === 'Credores' && (player.balance || 0) > 0);
-  
-  return matchesSearch && matchesFilter;
-});
+  // Filter players - CORRIGIDO
+  const filteredPlayers = players.filter(player => {
+    // Verificar se o jogador existe e tem nome
+    if (!player || !player.name) {
+      console.warn('Jogador inválido encontrado:', player);
+      return false;
+    }
+    
+    // Garantir que searchQuery é string
+    const searchTerm = (searchQuery || '').toLowerCase();
+    const playerName = player.name.toLowerCase();
+    
+    const matchesSearch = playerName.includes(searchTerm);
+    
+    // Usar safeNumber para comparações de balance
+    const playerBalance = safeNumber(player.balance);
+    const matchesFilter =
+      filterStatus === 'Todos' ||
+      (filterStatus === 'Pagos' && player.paid) ||
+      (filterStatus === 'Por Pagar' && !player.paid) ||
+      (filterStatus === 'Devedores' && playerBalance < 0) ||
+      (filterStatus === 'Credores' && playerBalance > 0);
+    
+    return matchesSearch && matchesFilter;
+  });
 
   if (loading) {
     return (
@@ -220,7 +238,17 @@ const filteredPlayers = players.filter(player => {
                 {currentView === 'players' && 'Gestão de Jogadores'}
                 {currentView === 'rounds' && 'Gestão de Rondas'}
                 {currentView === 'financial' && 'Gestão Financeira e Relatórios'}
-                {currentView === 'settings' && 'Configurações'}
+                {currentView === 'settings' && (
+  <div className="p-6">
+    <SettingsPage 
+      onClose={() => setCurrentView('dashboard')}
+      onUpdate={(newSettings) => {
+        setSettings(newSettings);
+        loadData();
+      }}
+    />
+  </div>
+)}
               </h2>
               <p className="text-sm text-gray-500 mt-1">
                 {new Date().toLocaleDateString('pt-PT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
@@ -260,7 +288,7 @@ const filteredPlayers = players.filter(player => {
           <div className="p-6">
             {/* Stats Grid */}
             <div className="grid grid-cols-4 gap-6 mb-6">
-              {/* Main Stats Cards */}
+              {/* Main Stats Cards - USANDO safeToFixed PARA TODOS OS VALORES */}
               <div className="bg-white rounded-xl shadow-sm p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div className="h-12 w-12 bg-blue-100 rounded-xl flex items-center justify-center">
@@ -293,17 +321,17 @@ const filteredPlayers = players.filter(player => {
                   <ArrowUpRight className="h-4 w-4 text-green-600" />
                 </div>
                 <p className="text-2xl font-bold text-gray-900">
-                  {stats.totalBalance >= 0 ? '+' : ''}{stats.totalBalance.toFixed(2)}€
+                  {stats.totalBalance >= 0 ? '+' : ''}{safeToFixed(stats.totalBalance)}€
                 </p>
                 <p className="text-sm text-gray-500 mt-1">Saldo Total</p>
                 <div className="mt-4 pt-4 border-t space-y-2">
                   <div className="flex justify-between text-xs">
                     <span className="text-gray-600">Créditos:</span>
-                    <span className="text-green-600 font-medium">+{stats.totalCredit.toFixed(2)}€</span>
+                    <span className="text-green-600 font-medium">+{safeToFixed(stats.totalCredit)}€</span>
                   </div>
                   <div className="flex justify-between text-xs">
                     <span className="text-gray-600">Dívidas:</span>
-                    <span className="text-red-600 font-medium">-{stats.totalDebt.toFixed(2)}€</span>
+                    <span className="text-red-600 font-medium">-{safeToFixed(stats.totalDebt)}€</span>
                   </div>
                 </div>
               </div>
@@ -317,7 +345,7 @@ const filteredPlayers = players.filter(player => {
                     {potStatus.text}
                   </span>
                 </div>
-                <p className="text-2xl font-bold text-gray-900">{stats.dinnerPot.toFixed(2)}€</p>
+                <p className="text-2xl font-bold text-gray-900">{safeToFixed(stats.dinnerPot)}€</p>
                 <p className="text-sm text-gray-500 mt-1">Pote do Jantar</p>
                 <div className="mt-4 pt-4 border-t">
                   <div className="flex justify-between text-xs mb-2">
@@ -422,8 +450,10 @@ const filteredPlayers = players.filter(player => {
                     </thead>
                     <tbody className="divide-y">
                       {filteredPlayers.map(player => {
-                        const isDebtor = player.balance < 0;
-                        const isCreditor = player.balance > 0;
+                        // USAR safeNumber PARA COMPARAÇÕES
+                        const playerBalance = safeNumber(player.balance);
+                        const isDebtor = playerBalance < 0;
+                        const isCreditor = playerBalance > 0;
                         
                         return (
                           <tr key={player.id} className="hover:bg-gray-50">
@@ -445,12 +475,12 @@ const filteredPlayers = players.filter(player => {
                                 isCreditor ? 'text-green-600' : 
                                 'text-gray-600'
                               }`}>
-                                {player.balance >= 0 ? '+' : ''}{player.balance.toFixed(2)}€
+                                {playerBalance >= 0 ? '+' : ''}{safeToFixed(playerBalance)}€
                               </span>
                             </td>
                             <td className="px-6 py-4">
                               <span className="text-blue-600 font-medium">
-                                {player.totalPoints || 0}
+                                {safeNumber(player.totalPoints)}
                               </span>
                             </td>
                             <td className="px-6 py-4">
@@ -529,6 +559,7 @@ const filteredPlayers = players.filter(player => {
                       <span className="font-medium">Gerar Relatório</span>
                       <ChevronRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
                     </button>
+
                   </div>
                 </div>
 
@@ -538,11 +569,12 @@ const filteredPlayers = players.filter(player => {
                   <div className="space-y-3">
                     {transactions.slice(0, 5).map((t, idx) => {
                       const player = players.find(p => p.id === t.playerId);
+                      const transactionAmount = safeNumber(t.amount);
                       return (
                         <div key={idx} className="flex items-center justify-between py-2">
                           <div className="flex items-center space-x-3">
                             <div className={`h-2 w-2 rounded-full ${
-                              t.amount > 0 ? 'bg-green-500' : 'bg-red-500'
+                              transactionAmount > 0 ? 'bg-green-500' : 'bg-red-500'
                             }`} />
                             <div>
                               <p className="text-sm font-medium">{player?.name || 'Unknown'}</p>
@@ -550,9 +582,9 @@ const filteredPlayers = players.filter(player => {
                             </div>
                           </div>
                           <span className={`text-sm font-bold ${
-                            t.amount > 0 ? 'text-green-600' : 'text-red-600'
+                            transactionAmount > 0 ? 'text-green-600' : 'text-red-600'
                           }`}>
-                            {t.amount > 0 ? '+' : ''}{t.amount.toFixed(2)}€
+                            {transactionAmount > 0 ? '+' : ''}{safeToFixed(transactionAmount)}€
                           </span>
                         </div>
                       );
@@ -576,7 +608,8 @@ const filteredPlayers = players.filter(player => {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-600">Versão:</span>
-                      <span className="font-medium">v2.0.1</span>
+                      <span className="font-medium">v1.6.0</span>
+                  <span className="font-medium">Made with love in Monte Gordo ❤️</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-600">Estado:</span>
@@ -661,7 +694,7 @@ const filteredPlayers = players.filter(player => {
                   </button>
                 </div>
                 
-                {/* Stats Summary */}
+                {/* Stats Summary - USANDO safeToFixed */}
                 <div className="grid grid-cols-6 gap-4">
                   <div className="bg-blue-50 rounded-lg p-3">
                     <p className="text-xs text-blue-600 font-medium">Total</p>
@@ -681,11 +714,11 @@ const filteredPlayers = players.filter(player => {
                   </div>
                   <div className="bg-red-50 rounded-lg p-3">
                     <p className="text-xs text-red-600 font-medium">Total Dívidas</p>
-                    <p className="text-xl font-bold text-red-900">{stats.totalDebt.toFixed(0)}€</p>
+                    <p className="text-xl font-bold text-red-900">{safeToFixed(stats.totalDebt, 0)}€</p>
                   </div>
                   <div className="bg-emerald-50 rounded-lg p-3">
                     <p className="text-xs text-emerald-600 font-medium">Total Créditos</p>
-                    <p className="text-xl font-bold text-emerald-900">{stats.totalCredit.toFixed(0)}€</p>
+                    <p className="text-xl font-bold text-emerald-900">{safeToFixed(stats.totalCredit, 0)}€</p>
                   </div>
                 </div>
               </div>
@@ -723,8 +756,9 @@ const filteredPlayers = players.filter(player => {
                   </thead>
                   <tbody className="divide-y">
                     {filteredPlayers.map((player, index) => {
-                      const isDebtor = player.balance < 0;
-                      const isCreditor = player.balance > 0;
+                      const playerBalance = safeNumber(player.balance);
+                      const isDebtor = playerBalance < 0;
+                      const isCreditor = playerBalance > 0;
                       
                       return (
                         <tr key={player.id} className="hover:bg-gray-50">
@@ -752,17 +786,17 @@ const filteredPlayers = players.filter(player => {
                               isCreditor ? 'text-green-600' : 
                               'text-gray-600'
                             }`}>
-                              {player.balance >= 0 ? '+' : ''}{player.balance.toFixed(2)}€
+                              {playerBalance >= 0 ? '+' : ''}{safeToFixed(playerBalance)}€
                             </span>
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-blue-600 font-medium">
-                              {player.totalPoints || 0}
+                              {safeNumber(player.totalPoints)}
                             </span>
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-gray-600">
-                              {player.totalRounds || 0}
+                              {safeNumber(player.totalRounds)}
                             </span>
                           </td>
                           <td className="px-6 py-4">
@@ -884,10 +918,21 @@ const filteredPlayers = players.filter(player => {
               <button
                 onClick={async () => {
                   if (newPlayerName.trim()) {
-                    await firestoreService.addPlayer(newPlayerName.trim());
-                    await loadData();
-                    setNewPlayerName('');
-                    setShowAddPlayer(false);
+                    const newPlayer = {
+                      name: newPlayerName.trim(),
+                      balance: -(settings?.entryFee || 20),
+                      paid: false,
+                      totalPoints: 0,
+                      createdAt: new Date().toISOString()
+                    };
+                    
+                    const result = await firestoreService.savePlayer(newPlayer);
+                    
+                    if (result.success) {
+                      await loadData(); // CRUCIAL!
+                      setNewPlayerName('');
+                      setShowAddPlayer(false);
+                    }
                   }
                 }}
                 className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"

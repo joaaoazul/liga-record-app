@@ -2,10 +2,82 @@
 <html lang="pt-PT">
   <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    
+    <!-- Metadados básicos -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes" />
+    <meta name="description" content="Liga Record - Gestor de Contas com troféus e conquistas" />
+    <meta name="keywords" content="liga, record, gestão, contas, troféu, desporto" />
+    <meta name="author" content="Liga Record Team" />
+    
+    <!-- Theme Color e Status Bar -->
     <meta name="theme-color" content="#16a34a" />
-    <meta name="description" content="Liga Record - Gestor de Contas" />
+    <meta name="msapplication-navbutton-color" content="#16a34a" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    
+    <!-- PWA Meta Tags -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Liga Record" />
+    <meta name="application-name" content="Liga Record" />
+    <meta name="format-detection" content="telephone=no" />
+    
+    <!-- Microsoft Tiles -->
+    <meta name="msapplication-TileColor" content="#16a34a" />
+    <meta name="msapplication-TileImage" content="/mstile-144x144.png" />
+    <meta name="msapplication-config" content="/browserconfig.xml" />
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ligarecord.pt/" />
+    <meta property="og:title" content="Liga Record - Gestor de Contas" />
+    <meta property="og:description" content="Gere as tuas contas e conquista troféus na Liga Record" />
+    <meta property="og:image" content="/og-image.png" />
+    <meta property="og:site_name" content="Liga Record" />
+    <meta property="og:locale" content="pt_PT" />
+    
+    <!-- Twitter Card -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content="https://ligarecord.pt/" />
+    <meta property="twitter:title" content="Liga Record - Gestor de Contas" />
+    <meta property="twitter:description" content="Gere as tuas contas e conquista troféus na Liga Record" />
+    <meta property="twitter:image" content="/twitter-image.png" />
+    
+    <!-- Favicons e Ícones -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192x192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512x512.png" />
+    <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#16a34a" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    
+    <!-- Web App Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- iOS Splash Screens -->
+    <!-- iPhone X, XS, 11 Pro -->
+    <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3)" href="/splash-1125x2436.png" />
+    <!-- iPhone XR, 11 -->
+    <link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2)" href="/splash-828x1792.png" />
+    <!-- iPhone XS Max, 11 Pro Max -->
+    <link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3)" href="/splash-1242x2688.png" />
+    <!-- iPhone 8, 7, 6s, 6 -->
+    <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2)" href="/splash-750x1334.png" />
+    <!-- iPhone 8 Plus, 7 Plus, 6s Plus, 6 Plus -->
+    <link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3)" href="/splash-1242x2208.png" />
+    <!-- iPad Pro 12.9" -->
+    <link rel="apple-touch-startup-image" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2)" href="/splash-2048x2732.png" />
+    <!-- iPad Pro 11" -->
+    <link rel="apple-touch-startup-image" media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2)" href="/splash-1668x2388.png" />
+    <!-- iPad Pro 10.5", iPad Air -->
+    <link rel="apple-touch-startup-image" media="(device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2)" href="/splash-1668x2224.png" />
+    <!-- iPad Mini, iPad -->
+    <link rel="apple-touch-startup-image" media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2)" href="/splash-1536x2048.png" />
+    
+    <!-- Preconnect para melhor performance -->
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" />
+    <link rel="dns-prefetch" href="https://cdn.tailwindcss.com" />
     
     <!-- Tailwind CSS via CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -15,17 +87,271 @@
           extend: {
             colors: {
               primary: '#16a34a',
-              secondary: '#059669'
+              secondary: '#059669',
+              accent: '#fbbf24'
+            },
+            animation: {
+              'trophy-bounce': 'trophy-bounce 2s ease-in-out infinite',
+              'trophy-shine': 'trophy-shine 3s ease-in-out infinite'
+            },
+            keyframes: {
+              'trophy-bounce': {
+                '0%, 100%': { transform: 'translateY(0) rotate(0deg)' },
+                '25%': { transform: 'translateY(-10px) rotate(-5deg)' },
+                '75%': { transform: 'translateY(-10px) rotate(5deg)' }
+              },
+              'trophy-shine': {
+                '0%': { opacity: '0.8' },
+                '50%': { opacity: '1' },
+                '100%': { opacity: '0.8' }
+              }
             }
           }
         }
       }
     </script>
     
+    <!-- Estilos customizados -->
+    <style>
+      /* Loader para PWA */
+      .pwa-loader {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(135deg, #16a34a 0%, #059669 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        transition: opacity 0.5s ease-out;
+      }
+      
+      .pwa-loader.hide {
+        opacity: 0;
+        pointer-events: none;
+      }
+      
+      /* Banner de instalação */
+      .install-prompt {
+        position: fixed;
+        bottom: 20px;
+        left: 20px;
+        right: 20px;
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        display: none;
+        z-index: 1000;
+        animation: slideUp 0.5s ease-out;
+      }
+      
+      .install-prompt.show {
+        display: block;
+      }
+      
+      @keyframes slideUp {
+        from {
+          transform: translateY(100%);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+      
+      /* Indicador offline */
+      .offline-indicator {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        background: #ef4444;
+        color: white;
+        text-align: center;
+        padding: 8px;
+        font-size: 14px;
+        z-index: 9998;
+        transform: translateY(-100%);
+        transition: transform 0.3s ease-in-out;
+      }
+      
+      .offline-indicator.show {
+        transform: translateY(0);
+      }
+      
+      /* Update disponível */
+      .update-toast {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #3b82f6;
+        color: white;
+        padding: 16px 20px;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        display: none;
+        z-index: 1001;
+        animation: slideInRight 0.5s ease-out;
+      }
+      
+      .update-toast.show {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      
+      @keyframes slideInRight {
+        from {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+    </style>
+    
     <title>Liga Record</title>
   </head>
   <body>
-    <noscript>Precisas de ativar JavaScript para usar esta aplicação.</noscript>
+    <noscript>
+      <div style="padding: 20px; text-align: center; background: #fef2f2; color: #dc2626;">
+        <h1>JavaScript Necessário</h1>
+        <p>Precisas de ativar JavaScript para usar a aplicação Liga Record.</p>
+      </div>
+    </noscript>
+    
+    <!-- Loader inicial da PWA -->
+    <div id="pwa-loader" class="pwa-loader">
+      <div class="text-center">
+        <svg class="h-24 w-24 text-yellow-400 animate-trophy-bounce mx-auto mb-4" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94A5.01 5.01 0 0 0 11 15.9V19H7v2h10v-2h-4v-3.1a5.01 5.01 0 0 0 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/>
+        </svg>
+        <h1 class="text-white text-2xl font-bold">Liga Record</h1>
+        <p class="text-white/80 mt-2">A carregar...</p>
+      </div>
+    </div>
+    
+    <!-- Indicador Offline -->
+    <div id="offline-indicator" class="offline-indicator">
+      <span>⚠️ Estás offline - Modo offline ativo</span>
+    </div>
+    
+    <!-- Toast de Update -->
+    <div id="update-toast" class="update-toast">
+      <span>Nova versão disponível!</span>
+      <button onclick="window.location.reload()" class="bg-white text-blue-600 px-3 py-1 rounded font-semibold hover:bg-blue-50 transition">
+        Atualizar
+      </button>
+    </div>
+    
+    <!-- Prompt de Instalação -->
+    <div id="install-prompt" class="install-prompt">
+      <div class="flex items-start gap-3">
+        <svg class="h-12 w-12 text-yellow-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94A5.01 5.01 0 0 0 11 15.9V19H7v2h10v-2h-4v-3.1a5.01 5.01 0 0 0 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/>
+        </svg>
+        <div class="flex-1">
+          <h3 class="font-bold text-gray-900 mb-1">Instalar Liga Record</h3>
+          <p class="text-sm text-gray-600 mb-3">Instala a app para acesso rápido e funcionamento offline!</p>
+          <div class="flex gap-2">
+            <button id="install-btn" class="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-700 transition">
+              Instalar Agora
+            </button>
+            <button id="install-later" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-semibold hover:bg-gray-300 transition">
+              Mais Tarde
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Root da aplicação React -->
     <div id="root"></div>
+    
+    <!-- Script de inicialização da PWA -->
+    <script>
+      // Remover loader após carregamento
+      window.addEventListener('load', () => {
+        setTimeout(() => {
+          document.getElementById('pwa-loader').classList.add('hide');
+        }, 1500);
+      });
+      
+      // Registar Service Worker
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(registration => {
+              console.log('Service Worker registado com sucesso:', registration);
+              
+              // Verificar atualizações
+              registration.addEventListener('updatefound', () => {
+                const newWorker = registration.installing;
+                newWorker.addEventListener('statechange', () => {
+                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    document.getElementById('update-toast').classList.add('show');
+                  }
+                });
+              });
+            })
+            .catch(error => {
+              console.error('Erro ao registar Service Worker:', error);
+            });
+        });
+      }
+      
+      // Detetar estado offline/online
+      window.addEventListener('online', () => {
+        document.getElementById('offline-indicator').classList.remove('show');
+      });
+      
+      window.addEventListener('offline', () => {
+        document.getElementById('offline-indicator').classList.add('show');
+      });
+      
+      // Install Prompt
+      let deferredPrompt;
+      
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        
+        // Mostrar prompt customizado
+        setTimeout(() => {
+          document.getElementById('install-prompt').classList.add('show');
+        }, 2000);
+      });
+      
+      document.getElementById('install-btn').addEventListener('click', async () => {
+        if (deferredPrompt) {
+          deferredPrompt.prompt();
+          const { outcome } = await deferredPrompt.userChoice;
+          console.log(`Utilizador escolheu: ${outcome}`);
+          deferredPrompt = null;
+          document.getElementById('install-prompt').classList.remove('show');
+        }
+      });
+      
+      document.getElementById('install-later').addEventListener('click', () => {
+        document.getElementById('install-prompt').classList.remove('show');
+      });
+      
+      // Detetar se foi instalado
+      window.addEventListener('appinstalled', () => {
+        console.log('PWA foi instalada');
+        document.getElementById('install-prompt').classList.remove('show');
+      });
+      
+      // Verificar se está em modo standalone
+      if (window.matchMedia('(display-mode: standalone)').matches) {
+        console.log('App está a correr em modo standalone');
+      }
+    </script>
   </body>
 </html>

@@ -1,9 +1,9 @@
-// src/services/firebase.js 
+// src/services/firebase.js - VERSÃO COMPLETA E CORRIGIDA
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
-  signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
   signOut, 
   onAuthStateChanged,
   updateProfile 
@@ -13,25 +13,28 @@ import {
   collection, 
   addDoc, 
   getDocs, 
-  setDoc, 
-  doc,
+  doc, 
+  updateDoc, 
+  deleteDoc,
+  getDoc,
   query,
   where,
-  deleteDoc,
-  updateDoc,
-  getDoc,
   orderBy,
-  limit
+  limit,
+  serverTimestamp 
 } from 'firebase/firestore';
 
-// Configurações do Firebase (usar variáveis de ambiente)
+// =====================================
+// FIREBASE CONFIGURATION
+// =====================================
 const firebaseConfig = {
+  // Your Firebase config here
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
   authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
   storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.REACT_APP_FIREBASE_APP_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID
 };
 
 // Initialize Firebase
@@ -39,36 +42,38 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// Helper para obter userId
+// =====================================
+// HELPER FUNCTIONS
+// =====================================
 const getCurrentUserId = () => {
-  return auth.currentUser?.uid || null;
+  const user = auth.currentUser;
+  if (user) {
+    return user.uid;
+  }
+  return 'anonymous';
 };
 
 // =====================================
 // AUTH SERVICE
 // =====================================
 export const authService = {
+  async signUp(email, password, displayName) {
+    try {
+      const result = await createUserWithEmailAndPassword(auth, email, password);
+      if (displayName) {
+        await updateProfile(result.user, { displayName });
+      }
+      return { success: true, user: result.user };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
   async signIn(email, password) {
     try {
       const result = await signInWithEmailAndPassword(auth, email, password);
       return { success: true, user: result.user };
     } catch (error) {
-      console.error('❌ Sign in error:', error);
-      return { success: false, error: error.message };
-    }
-  },
-
-  async signUp(email, password, displayName) {
-    try {
-      const result = await createUserWithEmailAndPassword(auth, email, password);
-      
-      if (displayName) {
-        await updateProfile(result.user, { displayName });
-      }
-      
-      return { success: true, user: result.user };
-    } catch (error) {
-      console.error('❌ Sign up error:', error);
       return { success: false, error: error.message };
     }
   },
@@ -78,7 +83,6 @@ export const authService = {
       await signOut(auth);
       return { success: true };
     } catch (error) {
-      console.error('❌ Sign out error:', error);
       return { success: false, error: error.message };
     }
   },
@@ -93,7 +97,7 @@ export const authService = {
 };
 
 // =====================================
-// FIRESTORE SERVICE
+// FIRESTORE SERVICE - COMPLETO E CORRIGIDO
 // =====================================
 export const firestoreService = {
   
@@ -109,22 +113,12 @@ export const firestoreService = {
         ...doc.data()
       }));
       
-      console.log('📊 Total players in DB:', players.length);
-      
-      // Filtrar por userId se estiver autenticado
+      // Filtrar por userId se existir
       if (userId) {
-        players = players.filter(player => player.userId === userId);
-        console.log('📊 Players for user:', players.length);
+        players = players.filter(p => p.userId === userId);
       }
       
-      // Ordenar por data de criação (mais recente primeiro)
-      players.sort((a, b) => {
-        const dateA = new Date(a.createdAt || 0);
-        const dateB = new Date(b.createdAt || 0);
-        return dateB - dateA;
-      });
-      
-      console.log('✅ Final players list:', players);
+      console.log('📊 Total players found:', players.length);
       return players;
     } catch (error) {
       console.error('❌ Error getting players:', error);
@@ -161,106 +155,43 @@ export const firestoreService = {
     }
   },
 
-  async savePlayer(player) {
+  async addPlayer(playerData) {
     try {
       const userId = getCurrentUserId();
-      console.log('💾 Saving player:', player, 'for user:', userId);
+      console.log('➕ Adding player for user:', userId);
       
-      const playerData = {
-        ...player,
-        updatedAt: new Date().toISOString()
+      const player = {
+        ...playerData,
+        userId: userId || 'anonymous',
+        createdAt: new Date().toISOString(),
+        balance: playerData.balance || 0,
+        paid: playerData.paid || false,
+        totalPoints: 0,
+        totalRounds: 0,
+        rounds: []
       };
-
-      // Adicionar userId se disponível
-      if (userId) {
-        playerData.userId = userId;
-      }
-
-      // Se tem ID e não é temporário, é update
-      if (player.id && !player.id.startsWith('temp_')) {
-        console.log('🔄 Updating existing player');
-        const playerRef = doc(db, 'players', player.id);
-        
-        // Verificar se existe antes de atualizar
-        const playerDoc = await getDoc(playerRef);
-        if (!playerDoc.exists()) {
-          console.error('❌ Player not found for update:', player.id);
-          // Se não existe, criar em vez de falhar
-          console.log('📝 Creating player instead of updating');
-          if (!playerData.createdAt) {
-            playerData.createdAt = new Date().toISOString();
-          }
-          await setDoc(playerRef, playerData);
-          console.log('✅ Player created with ID:', player.id);
-          return { success: true, id: player.id };
-        }
-        
-        await updateDoc(playerRef, playerData);
-        console.log('✅ Player updated');
-        return { success: true, id: player.id };
-      } else {
-        // É criação
-        console.log('➕ Creating new player');
-        if (!playerData.createdAt) {
-          playerData.createdAt = new Date().toISOString();
-        }
-        
-        // Garantir campos obrigatórios
-        playerData.balance = playerData.balance || 0;
-        playerData.rounds = playerData.rounds || [];
-        playerData.totalPoints = playerData.totalPoints || 0;
-        playerData.totalRounds = playerData.totalRounds || 0;
-        
-        // Se tem ID específico (não temporário), usar setDoc
-        if (player.id && player.id.startsWith('player_')) {
-          console.log('💾 Creating player with specific ID:', player.id);
-          const playerRef = doc(db, 'players', player.id);
-          await setDoc(playerRef, playerData);
-          console.log('✅ Player created with ID:', player.id);
-          return { success: true, id: player.id };
-        } else {
-          // Gerar ID automático
-          const docRef = await addDoc(collection(db, 'players'), playerData);
-          console.log('✅ Player created with auto ID:', docRef.id);
-          return { success: true, id: docRef.id };
-        }
-      }
+      
+      const docRef = await addDoc(collection(db, 'players'), player);
+      console.log('✅ Player added with ID:', docRef.id);
+      
+      return { success: true, id: docRef.id };
     } catch (error) {
-      console.error('❌ Error saving player:', error);
+      console.error('❌ Error adding player:', error);
       return { success: false, error: error.message };
     }
-  },
-
-  // Método alternativo para compatibilidade
-  async addPlayer(player) {
-    return this.savePlayer(player);
   },
 
   async updatePlayer(playerId, updates) {
     try {
       console.log('🔄 Updating player:', playerId);
       
-      if (!playerId) {
-        throw new Error('Player ID is required');
-      }
-      
       const playerRef = doc(db, 'players', playerId);
-      
-      // Verificar se existe
-      const playerDoc = await getDoc(playerRef);
-      if (!playerDoc.exists()) {
-        console.error('❌ Player not found:', playerId);
-        return { success: false, error: 'Player not found' };
-      }
-      
-      const updateData = {
+      await updateDoc(playerRef, {
         ...updates,
         updatedAt: new Date().toISOString()
-      };
+      });
       
-      await updateDoc(playerRef, updateData);
       console.log('✅ Player updated successfully');
-      
       return { success: true };
     } catch (error) {
       console.error('❌ Error updating player:', error);
@@ -268,30 +199,30 @@ export const firestoreService = {
     }
   },
 
+  async savePlayer(player) {
+    try {
+      if (player.id) {
+        // Update existing player
+        const { id, ...playerData } = player;
+        return await this.updatePlayer(id, playerData);
+      } else {
+        // Add new player
+        return await this.addPlayer(player);
+      }
+    } catch (error) {
+      console.error('❌ Error saving player:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
   async deletePlayer(playerId) {
     try {
-      console.log('🗑️ Attempting to delete player with ID:', playerId);
+      console.log('🗑️ Deleting player:', playerId);
       
-      if (!playerId) {
-        console.error('❌ No playerId provided');
-        return { success: false, error: 'No player ID provided' };
-      }
+      await deleteDoc(doc(db, 'players', playerId));
       
-      // Verificar se o documento existe primeiro
-      const playerRef = doc(db, 'players', playerId);
-      const playerDoc = await getDoc(playerRef);
-      
-      if (!playerDoc.exists()) {
-        console.error('❌ Player document does not exist:', playerId);
-        return { success: false, error: 'Player not found in database' };
-      }
-      
-      console.log('📄 Player exists, proceeding with deletion...');
-      await deleteDoc(playerRef);
       console.log('✅ Player deleted successfully');
-      
       return { success: true };
-      
     } catch (error) {
       console.error('❌ Error deleting player:', error);
       return { success: false, error: error.message };
@@ -302,7 +233,7 @@ export const firestoreService = {
   async getRounds() {
     try {
       const userId = getCurrentUserId();
-      console.log('🎯 Getting rounds for user:', userId);
+      console.log('🔍 Getting rounds for user:', userId);
       
       const snapshot = await getDocs(collection(db, 'rounds'));
       let rounds = snapshot.docs.map(doc => ({
@@ -310,22 +241,19 @@ export const firestoreService = {
         ...doc.data()
       }));
       
-      console.log('📊 Total rounds in DB:', rounds.length);
-      
       // Filtrar por userId se existir
       if (userId) {
         rounds = rounds.filter(r => r.userId === userId);
-        console.log('📊 Rounds for user:', rounds.length);
       }
       
-      // Ordenar por data de criação (mais recente primeiro)
+      // Ordenar por data de criação
       rounds.sort((a, b) => {
         const dateA = new Date(a.createdAt || 0);
         const dateB = new Date(b.createdAt || 0);
         return dateB - dateA;
       });
       
-      console.log('✅ Final rounds list:', rounds.length);
+      console.log('📊 Total rounds found:', rounds.length);
       return rounds;
     } catch (error) {
       console.error('❌ Error getting rounds:', error);
@@ -333,6 +261,7 @@ export const firestoreService = {
     }
   },
 
+  // ⭐ MÉTODO CORRIGIDO: getRoundById
   async getRoundById(roundId) {
     try {
       console.log('🔍 Getting round by ID:', roundId);
@@ -362,53 +291,23 @@ export const firestoreService = {
     }
   },
 
-  async getCurrentRound() {
+  async addRound(roundData) {
     try {
       const userId = getCurrentUserId();
-      console.log('🎯 Getting current round for user:', userId);
+      console.log('➕ Adding round for user:', userId);
       
-      const rounds = await this.getRounds();
-      
-      // Filtrar rondas ativas
-      const activeRounds = rounds.filter(r => r.status === 'active');
-      
-      // Retornar a mais recente
-      const currentRound = activeRounds.length > 0 ? activeRounds[0] : null;
-      console.log('📊 Current round:', currentRound);
-      
-      return currentRound;
-    } catch (error) {
-      console.error('❌ Error getting current round:', error);
-      return null;
-    }
-  },
-
-  async addRound(round) {
-    try {
-      const userId = getCurrentUserId();
-      console.log('🎯 Adding round for user:', userId);
-      
-      const roundData = {
-        ...round,
-        timestamp: new Date().toISOString(),
-        createdAt: round.createdAt || new Date().toISOString(),
+      const round = {
+        ...roundData,
         userId: userId || 'anonymous',
-        createdBy: round.createdBy || userId || 'anonymous'
+        createdAt: new Date().toISOString(),
+        status: 'active',
+        participants: []
       };
       
-      // CRÍTICO: Se a ronda tem um ID específico, usar setDoc
-      if (round.id) {
-        console.log('💾 Creating round with specific ID:', round.id);
-        const roundRef = doc(db, 'rounds', round.id);
-        await setDoc(roundRef, roundData);
-        console.log('✅ Round added with ID:', round.id);
-        return { success: true, id: round.id };
-      } else {
-        // Se não tem ID, usar addDoc (gera ID automático)
-        const docRef = await addDoc(collection(db, 'rounds'), roundData);
-        console.log('✅ Round added with auto ID:', docRef.id);
-        return { success: true, id: docRef.id };
-      }
+      const docRef = await addDoc(collection(db, 'rounds'), round);
+      console.log('✅ Round added with ID:', docRef.id);
+      
+      return { success: true, id: docRef.id };
     } catch (error) {
       console.error('❌ Error adding round:', error);
       return { success: false, error: error.message };
@@ -417,31 +316,15 @@ export const firestoreService = {
 
   async updateRound(roundId, updates) {
     try {
-      console.log('🔄 Updating round:', roundId, 'with updates:', updates);
-      
-      if (!roundId) {
-        console.error('❌ No roundId provided');
-        return { success: false, error: 'No round ID provided' };
-      }
+      console.log('🔄 Updating round:', roundId);
       
       const roundRef = doc(db, 'rounds', roundId);
-      
-      // Verificar se existe primeiro
-      const roundDoc = await getDoc(roundRef);
-      if (!roundDoc.exists()) {
-        console.error('❌ Round does not exist:', roundId);
-        return { success: false, error: 'Round not found', code: 'ROUND_NOT_FOUND' };
-      }
-      
-      // Adicionar timestamp de atualização
-      const updateData = {
+      await updateDoc(roundRef, {
         ...updates,
         updatedAt: new Date().toISOString()
-      };
+      });
       
-      await updateDoc(roundRef, updateData);
       console.log('✅ Round updated successfully');
-      
       return { success: true };
     } catch (error) {
       console.error('❌ Error updating round:', error);
@@ -451,107 +334,14 @@ export const firestoreService = {
 
   async deleteRound(roundId) {
     try {
-      console.log('🗑️ Attempting to delete round with ID:', roundId);
+      console.log('🗑️ Deleting round:', roundId);
       
-      if (!roundId) {
-        console.error('❌ No roundId provided');
-        return { success: false, error: 'No round ID provided' };
-      }
+      await deleteDoc(doc(db, 'rounds', roundId));
       
-      // Verificar se o documento existe primeiro
-      const roundRef = doc(db, 'rounds', roundId);
-      const roundDoc = await getDoc(roundRef);
-      
-      if (!roundDoc.exists()) {
-        console.error('❌ Round document does not exist:', roundId);
-        return { success: false, error: 'Round not found in database' };
-      }
-      
-      console.log('📄 Round exists, proceeding with deletion...');
-      await deleteDoc(roundRef);
       console.log('✅ Round deleted successfully');
-      
       return { success: true };
     } catch (error) {
       console.error('❌ Error deleting round:', error);
-      return { success: false, error: error.message };
-    }
-  },
-
-  // ========== SETTINGS ==========
-  async getSettings() {
-    try {
-      const userId = getCurrentUserId();
-      console.log('⚙️ Getting settings for user:', userId);
-      
-      const snapshot = await getDocs(collection(db, 'settings'));
-      const allSettings = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
-      // Filtrar por userId se disponível
-      if (userId) {
-        const userSettings = allSettings.find(s => s.userId === userId);
-        if (userSettings) {
-          console.log('📊 User settings found:', userSettings);
-          return userSettings;
-        }
-      }
-      
-      // Fallback para configurações globais
-      const globalSettings = allSettings.find(s => !s.userId || s.id === 'global') || allSettings[0];
-      if (globalSettings) {
-        console.log('📊 Global settings found:', globalSettings);
-        return globalSettings;
-      }
-      
-      // Default settings
-      const defaults = { entryFee: 20, ligaName: 'Liga Record' };
-      console.log('📊 Using default settings:', defaults);
-      return defaults;
-    } catch (error) {
-      console.error('❌ Error getting settings:', error);
-      return { entryFee: 20, ligaName: 'Liga Record' };
-    }
-  },
-
-  async saveSettings(settings) {
-    try {
-      const userId = getCurrentUserId();
-      console.log('💾 Saving settings for user:', userId);
-      
-      const settingsData = {
-        ...settings,
-        updatedAt: new Date().toISOString()
-      };
-
-      if (userId) {
-        settingsData.userId = userId;
-        
-        // Procurar configurações existentes do utilizador
-        const snapshot = await getDocs(collection(db, 'settings'));
-        const existingSettings = snapshot.docs.find(doc => {
-          const data = doc.data();
-          return data.userId === userId;
-        });
-        
-        if (existingSettings) {
-          // Update existing
-          const settingsRef = doc(db, 'settings', existingSettings.id);
-          await updateDoc(settingsRef, settingsData);
-        } else {
-          // Create new
-          settingsData.createdAt = new Date().toISOString();
-          await addDoc(collection(db, 'settings'), settingsData);
-        }
-      } else {
-        // Configurações globais
-        const settingsRef = doc(db, 'settings', 'global');
-        await setDoc(settingsRef, settingsData);
-      }
-      
-      console.log('✅ Settings saved');
-      return { success: true };
-    } catch (error) {
-      console.error('❌ Error saving settings:', error);
       return { success: false, error: error.message };
     }
   },
@@ -560,7 +350,7 @@ export const firestoreService = {
   async getTransactions() {
     try {
       const userId = getCurrentUserId();
-      console.log('💸 Getting transactions for user:', userId);
+      console.log('🔍 Getting transactions for user:', userId);
       
       const snapshot = await getDocs(collection(db, 'transactions'));
       let transactions = snapshot.docs.map(doc => ({
@@ -568,22 +358,19 @@ export const firestoreService = {
         ...doc.data()
       }));
       
-      console.log('📊 Total transactions in DB:', transactions.length);
-      
       // Filtrar por userId se existir
       if (userId) {
         transactions = transactions.filter(t => t.userId === userId);
-        console.log('📊 Transactions for user:', transactions.length);
       }
       
-      // Ordenar por timestamp (mais recente primeiro)
+      // Ordenar por data
       transactions.sort((a, b) => {
-        const dateA = new Date(a.timestamp || a.createdAt || 0);
-        const dateB = new Date(b.timestamp || b.createdAt || 0);
+        const dateA = new Date(a.date || a.createdAt || 0);
+        const dateB = new Date(b.date || b.createdAt || 0);
         return dateB - dateA;
       });
       
-      console.log('✅ Final transactions list:', transactions.length);
+      console.log('📊 Total transactions found:', transactions.length);
       return transactions;
     } catch (error) {
       console.error('❌ Error getting transactions:', error);
@@ -591,20 +378,19 @@ export const firestoreService = {
     }
   },
 
-  async addTransaction(transaction) {
+  async addTransaction(transactionData) {
     try {
       const userId = getCurrentUserId();
-      console.log('💸 Adding transaction for user:', userId);
+      console.log('➕ Adding transaction for user:', userId);
       
-      const transactionData = {
-        ...transaction,
-        timestamp: transaction.timestamp || new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+      const transaction = {
+        ...transactionData,
         userId: userId || 'anonymous',
-        createdBy: transaction.createdBy || userId || 'anonymous'
+        createdAt: new Date().toISOString(),
+        date: transactionData.date || new Date().toISOString()
       };
       
-      const docRef = await addDoc(collection(db, 'transactions'), transactionData);
+      const docRef = await addDoc(collection(db, 'transactions'), transaction);
       console.log('✅ Transaction added with ID:', docRef.id);
       
       return { success: true, id: docRef.id };
@@ -614,102 +400,215 @@ export const firestoreService = {
     }
   },
 
-  // ========== PAYMENTS ==========
-  async getPayments() {
+  // ========== SETTINGS ==========
+  async getSettings() {
     try {
       const userId = getCurrentUserId();
-      console.log('💰 Getting payments for user:', userId);
+      console.log('🔍 Getting settings for user:', userId);
       
-      const snapshot = await getDocs(collection(db, 'payments'));
-      let payments = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const q = query(
+        collection(db, 'settings'),
+        where('userId', '==', userId),
+        limit(1)
+      );
       
-      // Filtrar por userId se existir
-      if (userId) {
-        payments = payments.filter(p => p.userId === userId);
+      const snapshot = await getDocs(q);
+      
+      if (!snapshot.empty) {
+        const settingsDoc = snapshot.docs[0];
+        return {
+          id: settingsDoc.id,
+          ...settingsDoc.data()
+        };
       }
       
-      console.log('📊 Total payments found:', payments.length);
-      return payments;
+      // Return default settings if none exist
+      return {
+        entryFee: 121,
+        weeklyPayment: 5,
+        dinnerPotGoal: 200,
+        distributionPercentages: [40, 30, 20, 10]
+      };
     } catch (error) {
-      console.error('❌ Error getting payments:', error);
-      return [];
+      console.error('❌ Error getting settings:', error);
+      return null;
     }
   },
 
-  async addPayment(payment) {
+  async updateSettings(settings) {
     try {
       const userId = getCurrentUserId();
-      console.log('💰 Adding payment for user:', userId);
+      console.log('🔄 Updating settings for user:', userId);
       
-      const paymentData = {
-        ...payment,
-        userId: userId || 'anonymous',
-        createdAt: new Date().toISOString(),
-        status: payment.status || 'pending'
-      };
+      // Check if settings exist
+      const q = query(
+        collection(db, 'settings'),
+        where('userId', '==', userId),
+        limit(1)
+      );
       
-      const docRef = await addDoc(collection(db, 'payments'), paymentData);
-      console.log('✅ Payment added with ID:', docRef.id);
+      const snapshot = await getDocs(q);
       
-      return { success: true, id: docRef.id };
-    } catch (error) {
-      console.error('❌ Error adding payment:', error);
-      return { success: false, error: error.message };
-    }
-  },
-
-  async updatePayment(paymentId, updates) {
-    try {
-      console.log('🔄 Updating payment:', paymentId);
+      if (!snapshot.empty) {
+        // Update existing settings
+        const settingsDoc = snapshot.docs[0];
+        await updateDoc(doc(db, 'settings', settingsDoc.id), {
+          ...settings,
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        // Create new settings
+        await addDoc(collection(db, 'settings'), {
+          ...settings,
+          userId,
+          createdAt: new Date().toISOString()
+        });
+      }
       
-      const paymentRef = doc(db, 'payments', paymentId);
-      
-      const updateData = {
-        ...updates,
-        updatedAt: new Date().toISOString()
-      };
-      
-      await updateDoc(paymentRef, updateData);
-      console.log('✅ Payment updated successfully');
-      
+      console.log('✅ Settings updated successfully');
       return { success: true };
     } catch (error) {
-      console.error('❌ Error updating payment:', error);
+      console.error('❌ Error updating settings:', error);
       return { success: false, error: error.message };
     }
   },
 
-  async confirmPayment(paymentId, amount, notes = '') {
+  // ========== UTILITY METHODS ==========
+  async chargeWeeklyFees(amount) {
     try {
-      const userId = getCurrentUserId();
-      console.log('✅ Confirming payment:', paymentId);
+      console.log('💰 Charging weekly fees:', amount);
+      
+      const players = await this.getPlayers();
+      
+      for (const player of players) {
+        if (player.paid) {
+          const newBalance = (player.balance || 0) - amount;
+          
+          await this.updatePlayer(player.id, { balance: newBalance });
+          
+          await this.addTransaction({
+            playerId: player.id,
+            playerName: player.name,
+            type: 'debt',
+            amount: amount,
+            note: 'Taxa semanal',
+            balanceAfter: newBalance
+          });
+        }
+      }
+      
+      console.log('✅ Weekly fees charged successfully');
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Error charging weekly fees:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async settleAllDebts() {
+    try {
+      console.log('💳 Settling all debts');
+      
+      const players = await this.getPlayers();
+      
+      for (const player of players) {
+        if (player.balance < 0) {
+          await this.updatePlayer(player.id, { balance: 0 });
+          
+          await this.addTransaction({
+            playerId: player.id,
+            playerName: player.name,
+            type: 'payment',
+            amount: Math.abs(player.balance),
+            note: 'Liquidação de dívida',
+            balanceAfter: 0
+          });
+        }
+      }
+      
+      console.log('✅ All debts settled successfully');
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Error settling debts:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async settleDebt(playerId, amount, note = 'Pagamento de dívida') {
+    try {
+      console.log('💳 Settling debt for player:', playerId);
+      
+      const player = await this.getPlayerById(playerId);
+      if (!player) {
+        throw new Error('Player not found');
+      }
+      
+      const newBalance = (player.balance || 0) + amount;
+      
+      await this.updatePlayer(playerId, { balance: newBalance });
+      
+      await this.addTransaction({
+        playerId: player.id,
+        playerName: player.name,
+        type: 'payment',
+        amount: amount,
+        note: note,
+        balanceAfter: newBalance
+      });
+      
+      console.log('✅ Debt settled successfully');
+      return { success: true, newBalance };
+    } catch (error) {
+      console.error('❌ Error settling debt:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  // ========== PAYMENT METHODS ==========
+  async confirmPayment(paymentId, amount) {
+    try {
+      console.log('💳 Confirming payment:', paymentId);
       
       const paymentRef = doc(db, 'payments', paymentId);
       
-      // Buscar o pagamento para obter o valor original
+      // Primeiro buscar o pagamento para obter os dados
       const paymentDoc = await getDoc(paymentRef);
       
       if (!paymentDoc.exists()) {
-        console.error('❌ Payment not found:', paymentId);
-        return { success: false, error: 'Payment not found' };
+        throw new Error('Payment not found');
       }
       
       const payment = paymentDoc.data();
       
-      const updates = {
-        amountPaid: amount,
+      // Atualizar o pagamento
+      await updateDoc(paymentRef, {
         status: amount >= (payment.amount || 0) ? 'paid' : 'partial',
+        paidAmount: amount,
         paidAt: new Date().toISOString(),
-        confirmedBy: userId,
-        notes
-      };
+        updatedAt: new Date().toISOString()
+      });
       
-      await updateDoc(paymentRef, updates);
-      console.log('✅ Payment confirmed');
+      // Atualizar o saldo do jogador
+      if (payment.playerId) {
+        const player = await this.getPlayerById(payment.playerId);
+        if (player) {
+          const newBalance = (player.balance || 0) + amount;
+          await this.updatePlayer(payment.playerId, { balance: newBalance });
+          
+          // Adicionar transação
+          await this.addTransaction({
+            playerId: payment.playerId,
+            playerName: player.name,
+            type: 'payment',
+            amount: amount,
+            note: `Pagamento confirmado - ${payment.description || 'Sem descrição'}`,
+            balanceAfter: newBalance,
+            paymentId: paymentId
+          });
+        }
+      }
       
+      console.log('✅ Payment confirmed successfully');
       return { success: true };
     } catch (error) {
       console.error('❌ Error confirming payment:', error);
@@ -721,209 +620,73 @@ export const firestoreService = {
   async generateFinancialReport(leagueId = 'default') {
     try {
       const userId = getCurrentUserId();
-      console.log('📊 Generating financial report for user:', userId);
+      console.log('📊 Generating financial report');
       
-      // 1. Verificar se existem 5 rondas completas
-      const rounds = await this.getRounds();
+      // Buscar todos os dados necessários
+      const [players, transactions, rounds] = await Promise.all([
+        this.getPlayers(),
+        this.getTransactions(),
+        this.getRounds()
+      ]);
+      
+      // Calcular estatísticas
       const completedRounds = rounds.filter(r => r.status === 'completed');
       
-      if (completedRounds.length < 5) {
-        return { 
-          success: false, 
-          error: `Apenas ${completedRounds.length} rondas completas. Necessário 5.` 
-        };
-      }
-      
-      // 2. Buscar todos os jogadores
-      const players = await this.getPlayers();
-      
-      // 3. Calcular sumário financeiro
       const playerSummary = players.map(player => {
-        const roundsPlayed = completedRounds.filter(round => 
-          round.participants?.some(p => p.playerId === player.id)
-        );
-        
-        const totalPaid = roundsPlayed.reduce((sum, round) => {
-          const participant = round.participants.find(p => p.playerId === player.id);
-          return sum + (participant?.weeklyPayment || 0);
-        }, 0);
+        const playerTransactions = transactions.filter(t => t.playerId === player.id);
+        const totalDebts = playerTransactions
+          .filter(t => t.type === 'debt')
+          .reduce((sum, t) => sum + t.amount, 0);
+        const totalPayments = playerTransactions
+          .filter(t => t.type === 'payment')
+          .reduce((sum, t) => sum + t.amount, 0);
         
         return {
           playerId: player.id,
           playerName: player.name,
           currentBalance: player.balance || 0,
-          totalPaid: totalPaid,
-          totalOwed: Math.abs(Math.min(0, player.balance || 0)),
-          netBalance: player.balance || 0,
-          roundsPlayed: roundsPlayed.length
+          totalDebts,
+          totalPayments,
+          netBalance: totalPayments - totalDebts,
+          roundsPlayed: player.totalRounds || 0,
+          totalPoints: player.totalPoints || 0
         };
       });
       
-      // 4. Calcular totais
       const totals = {
-        totalToCollect: playerSummary.reduce((sum, p) => sum + p.totalOwed, 0),
-        totalToPay: playerSummary.reduce((sum, p) => sum + Math.max(0, p.netBalance), 0),
-        netBalance: playerSummary.reduce((sum, p) => sum + p.netBalance, 0)
+        totalPlayers: players.length,
+        totalRounds: completedRounds.length,
+        totalDebt: playerSummary.reduce((sum, p) => sum + Math.max(0, -p.currentBalance), 0),
+        totalCredit: playerSummary.reduce((sum, p) => sum + Math.max(0, p.currentBalance), 0),
+        dinnerPot: Math.abs(playerSummary.reduce((sum, p) => sum + p.currentBalance, 0))
       };
       
-      // 5. Criar documento do relatório
       const reportData = {
         leagueId,
         userId,
-        season: new Date().getFullYear(),
         generatedAt: new Date().toISOString(),
-        generatedBy: userId,
         playerSummary,
         totals,
-        rounds: completedRounds.map(r => ({
-          roundId: r.id,
-          roundName: r.name,
-          completedAt: r.completedAt,
-          participants: r.participants
-        })),
-        status: 'final'
+        rounds: completedRounds.length,
+        status: 'generated'
       };
       
-      // 6. Guardar no Firestore
-      const docRef = await addDoc(collection(db, 'financialReports'), reportData);
+      // Guardar relatório
+      const docRef = await addDoc(collection(db, 'reports'), reportData);
+      
       console.log('✅ Financial report generated:', docRef.id);
-      
-      // 7. Criar registos de tracking de pagamentos
-      const paymentTracking = playerSummary
-        .filter(p => p.totalOwed > 0)
-        .map(p => ({
-          reportId: docRef.id,
-          userId,
-          playerId: p.playerId,
-          playerName: p.playerName,
-          amountOwed: p.totalOwed,
-          amountPaid: 0,
-          paymentStatus: 'pending',
-          createdAt: new Date().toISOString()
-        }));
-      
-      // Adicionar tracking de pagamentos
-      for (const payment of paymentTracking) {
-        await addDoc(collection(db, 'paymentTracking'), payment);
-      }
-      
-      return { 
-        success: true, 
-        reportId: docRef.id,
-        data: reportData 
-      };
-      
+      return { success: true, reportId: docRef.id, data: reportData };
     } catch (error) {
-      console.error('❌ Error generating financial report:', error);
+      console.error('❌ Error generating report:', error);
       return { success: false, error: error.message };
-    }
-  },
-
-  async getFinancialReports() {
-    try {
-      const userId = getCurrentUserId();
-      const snapshot = await getDocs(collection(db, 'financialReports'));
-      
-      let reports = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
-      if (userId) {
-        reports = reports.filter(r => r.userId === userId);
-      }
-      
-      reports.sort((a, b) => new Date(b.generatedAt) - new Date(a.generatedAt));
-      
-      return reports;
-    } catch (error) {
-      console.error('❌ Error getting financial reports:', error);
-      return [];
-    }
-  },
-
-  async getFinancialReport(reportId) {
-    try {
-      const docRef = doc(db, 'financialReports', reportId);
-      const docSnap = await getDoc(docRef);
-      
-      if (docSnap.exists()) {
-        return { id: docSnap.id, ...docSnap.data() };
-      }
-      
-      return null;
-    } catch (error) {
-      console.error('❌ Error getting financial report:', error);
-      return null;
-    }
-  },
-
-  async updatePaymentStatus(paymentId, amountPaid, notes) {
-    try {
-      const userId = getCurrentUserId();
-      const paymentRef = doc(db, 'paymentTracking', paymentId);
-      
-      // Buscar o documento para obter o amountOwed
-      const paymentDoc = await getDoc(paymentRef);
-      if (!paymentDoc.exists()) {
-        throw new Error('Payment record not found');
-      }
-      
-      const paymentData = paymentDoc.data();
-      const amountOwed = paymentData.amountOwed || 0;
-      
-      const updates = {
-        amountPaid,
-        paymentStatus: amountPaid >= amountOwed ? 'paid' : 'partial',
-        paidAt: new Date().toISOString(),
-        confirmedBy: userId,
-        notes
-      };
-      
-      await updateDoc(paymentRef, updates);
-      
-      return { success: true };
-    } catch (error) {
-      console.error('❌ Error updating payment:', error);
-      return { success: false, error: error.message };
-    }
-  },
-
-  // ========== UTILITY FUNCTIONS ==========
-  async documentExists(collectionName, docId) {
-    try {
-      const docRef = doc(db, collectionName, docId);
-      const docSnap = await getDoc(docRef);
-      return docSnap.exists();
-    } catch (error) {
-      console.error('Error checking document existence:', error);
-      return false;
-    }
-  },
-
-  // Método para verificar conexão
-  async checkConnection() {
-    try {
-      // Tentar ler um documento simples
-      const testRef = doc(db, 'test', 'connection');
-      await getDoc(testRef);
-      return true;
-    } catch (error) {
-      console.error('Firebase connection error:', error);
-      return false;
     }
   }
 };
 
-
-
-// Expor funções globalmente para debug (apenas em desenvolvimento)
-if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
-  window.firestoreService = firestoreService;
-  window.authService = authService;
-  window.getCurrentUserId = getCurrentUserId;
-  console.log('🛠️ Firebase services exposed to window for debugging');
-}
-
-// Export default para compatibilidade
-export default { authService, firestoreService };
+// Export tudo como default também para compatibilidade
+export default {
+  auth,
+  db,
+  authService,
+  firestoreService
+};

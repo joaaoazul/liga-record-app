@@ -1,4 +1,4 @@
-// src/components/dashboard/PerfectMobileDashboard.js
+// src/components/dashboard/PerfectMobileDashboard.js 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Trophy, 
@@ -42,12 +42,24 @@ import PlayerProfile from '../players/PlayerProfile';
 import RoundsManager from '../rounds/RoundsManager';
 import FinancialReport from '../financial/FinancialReport';
 
+// Função auxiliar para garantir que um valor seja número
+const safeNumber = (value, defaultValue = 0) => {
+  const num = Number(value);
+  return isNaN(num) || !isFinite(num) ? defaultValue : num;
+};
+
+// Função auxiliar para formatar valores com toFixed de forma segura
+const safeToFixed = (value, decimals = 2, defaultValue = 0) => {
+  const num = safeNumber(value, defaultValue);
+  return num.toFixed(decimals);
+};
+
 const PerfectMobileDashboard = () => {
   const [players, setPlayers] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [settings, setSettings] = useState({
-    entryFee: 20,
+    entryFee: 10,
     weeklyPayment: 5,
     dinnerPotGoal: 200,
     distributionPercentages: [40, 30, 20, 10]
@@ -155,17 +167,19 @@ const PerfectMobileDashboard = () => {
     }
   };
 
-  // Calculate stats
+  // Calculate stats - CORRIGIDO COM VALIDAÇÕES
   const stats = {
     totalPlayers: players.length,
     paidPlayers: players.filter(p => p.paid).length,
     unpaidPlayers: players.filter(p => !p.paid).length,
-    totalBalance: players.reduce((sum, p) => sum + (p.balance || 0), 0),
-    totalCredit: players.reduce((sum, p) => sum + Math.max(0, p.balance || 0), 0),
-    totalDebt: Math.abs(players.reduce((sum, p) => sum + Math.min(0, p.balance || 0), 0)),
-    dinnerPot: Math.abs(players.reduce((sum, p) => sum + (p.balance || 0), 0)),
-    totalPoints: players.reduce((sum, p) => sum + (p.totalPoints || 0), 0),
-    averagePoints: players.length > 0 ? (players.reduce((sum, p) => sum + (p.totalPoints || 0), 0) / players.length).toFixed(1) : '0.0',
+    // CORREÇÃO: Garantir que todos os valores sejam números válidos
+    totalBalance: safeNumber(players.reduce((sum, p) => sum + safeNumber(p.balance), 0)),
+    totalCredit: safeNumber(players.reduce((sum, p) => sum + Math.max(0, safeNumber(p.balance)), 0)),
+    totalDebt: Math.abs(safeNumber(players.reduce((sum, p) => sum + Math.min(0, safeNumber(p.balance)), 0))),
+    dinnerPot: Math.abs(safeNumber(players.reduce((sum, p) => sum + safeNumber(p.balance), 0))),
+    totalPoints: safeNumber(players.reduce((sum, p) => sum + safeNumber(p.totalPoints), 0)),
+    averagePoints: players.length > 0 ? 
+      safeToFixed(safeNumber(players.reduce((sum, p) => sum + safeNumber(p.totalPoints), 0)) / players.length, 1) : '0.0',
     totalRounds: rounds.length
   };
 
@@ -179,15 +193,24 @@ const PerfectMobileDashboard = () => {
 
   const potStatus = getPotStatus();
 
-  // Filter players
+  // Filter players - CORRIGIDO
   const filteredPlayers = players.filter(player => {
+    // Verificar se o jogador existe e tem nome
+    if (!player || !player.name) {
+      console.warn('Jogador inválido encontrado:', player);
+      return false;
+    }
+    
     const matchesSearch = player.name.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    // Usar safeNumber para comparações de balance
+    const playerBalance = safeNumber(player.balance);
     const matchesFilter = 
       filterStatus === 'Todos' ||
       (filterStatus === 'Pagos' && player.paid) ||
       (filterStatus === 'Por Pagar' && !player.paid) ||
-      (filterStatus === 'Devedores' && player.balance < 0) ||
-      (filterStatus === 'Credores' && player.balance > 0);
+      (filterStatus === 'Devedores' && playerBalance < 0) ||
+      (filterStatus === 'Credores' && playerBalance > 0);
     
     return matchesSearch && matchesFilter;
   });
@@ -420,7 +443,7 @@ const PerfectMobileDashboard = () => {
       {/* Dashboard Tab */}
       {currentTab === 'Dashboard' && (
         <div className="px-4 py-4 space-y-4">
-          {/* Stats Cards - EXACTO como na imagem */}
+          {/* Stats Cards - EXACTO como na imagem - USANDO safeToFixed */}
           <div className="grid grid-cols-2 gap-3">
             {/* Total Jogadores - Card Azul Escuro */}
             <div className="bg-[#1e3a8a] rounded-2xl p-4 text-white relative overflow-hidden">
@@ -446,11 +469,11 @@ const PerfectMobileDashboard = () => {
               <div className="relative">
                 <p className="text-xs font-medium opacity-90 mb-1">Saldo da Liga</p>
                 <p className="text-2xl font-bold mb-3">
-                  {stats.totalBalance >= 0 ? '+' : ''}{stats.totalBalance.toFixed(2)} €
+                  {stats.totalBalance >= 0 ? '+' : ''}{safeToFixed(stats.totalBalance)} €
                 </p>
                 <div className="pt-2 border-t border-white/20">
                   <p className="text-[10px] opacity-75">
-                    {stats.totalCredit.toFixed(2)} € crédito {stats.totalDebt.toFixed(2)} € dívida
+                    {safeToFixed(stats.totalCredit)} € crédito {safeToFixed(stats.totalDebt)} € dívida
                   </p>
                 </div>
               </div>
@@ -463,7 +486,7 @@ const PerfectMobileDashboard = () => {
               </div>
               <div className="relative">
                 <p className="text-xs font-medium opacity-90 mb-1">Pote do Jantar</p>
-                <p className="text-2xl font-bold mb-3">{stats.dinnerPot.toFixed(2)} €</p>
+                <p className="text-2xl font-bold mb-3">{safeToFixed(stats.dinnerPot)} €</p>
                 <div className="pt-2 border-t border-white/20">
                   <p className="text-[10px]">
                     Fundos disponíveis
@@ -550,12 +573,14 @@ const PerfectMobileDashboard = () => {
               </div>
             </div>
 
-            {/* Players List */}
+            {/* Players List - USANDO safeNumber e safeToFixed */}
             <div className="divide-y divide-gray-100">
               {filteredPlayers.length > 0 ? (
                 filteredPlayers.map(player => {
-                  const isDebtor = player.balance < 0;
-                  const isCreditor = player.balance > 0;
+                  const playerBalance = safeNumber(player.balance);
+                  const isDebtor = playerBalance < 0;
+                  const isCreditor = playerBalance > 0;
+                  const playerPoints = safeNumber(player.totalPoints);
                   
                   return (
                     <div
@@ -580,13 +605,13 @@ const PerfectMobileDashboard = () => {
                                 isCreditor ? 'text-green-600' : 
                                 'text-gray-600'
                               }`}>
-                                {player.balance >= 0 ? '+' : ''}{player.balance.toFixed(2)}€
+                                {playerBalance >= 0 ? '+' : ''}{safeToFixed(playerBalance)}€
                               </span>
-                              {player.totalPoints > 0 && (
+                              {playerPoints > 0 && (
                                 <>
                                   <span className="text-gray-400">•</span>
                                   <span className="text-blue-600 font-medium">
-                                    {player.totalPoints} pts
+                                    {playerPoints} pts
                                   </span>
                                 </>
                               )}
@@ -715,7 +740,7 @@ const PerfectMobileDashboard = () => {
         </div>
       )}
 
-      {/* Player Actions Menu */}
+      {/* Player Actions Menu - USANDO safeNumber e safeToFixed */}
       {showPlayerActions && selectedPlayer && (
         <div className="fixed inset-0 z-50">
           <div className="fixed inset-0 bg-black bg-opacity-50" onClick={() => setShowPlayerActions(false)} />
@@ -724,8 +749,8 @@ const PerfectMobileDashboard = () => {
             
             <div className="flex items-center space-x-3 mb-6">
               <div className={`h-12 w-12 rounded-full flex items-center justify-center font-bold text-white ${
-                selectedPlayer.balance < 0 ? 'bg-red-500' : 
-                selectedPlayer.balance > 0 ? 'bg-green-500' : 
+                safeNumber(selectedPlayer.balance) < 0 ? 'bg-red-500' : 
+                safeNumber(selectedPlayer.balance) > 0 ? 'bg-green-500' : 
                 'bg-gray-400'
               }`}>
                 {selectedPlayer.name.substring(0, 2).toUpperCase()}
@@ -733,7 +758,7 @@ const PerfectMobileDashboard = () => {
               <div>
                 <p className="font-bold">{selectedPlayer.name}</p>
                 <p className="text-sm text-gray-500">
-                  Saldo: {selectedPlayer.balance >= 0 ? '+' : ''}{selectedPlayer.balance.toFixed(2)}€
+                  Saldo: {safeNumber(selectedPlayer.balance) >= 0 ? '+' : ''}{safeToFixed(selectedPlayer.balance)}€
                 </p>
               </div>
             </div>
