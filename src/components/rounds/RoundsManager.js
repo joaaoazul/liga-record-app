@@ -38,13 +38,13 @@ return;
 
 ```
 const sorted = [...players].sort((a, b) => {
-  // Primeiro critério: pontos (maior para menor)
+  // Primeiro criterio: pontos (maior para menor)
   const pointsDiff = (b.points || 0) - (a.points || 0);
   if (pointsDiff !== 0) {
     return pointsDiff;
   }
   
-  // Segundo critério: ordem de desempate manual (se definida)
+  // Segundo criterio: ordem de desempate manual (se definida)
   const aTiebreak = a.tiebreakOrder || 0;
   const bTiebreak = b.tiebreakOrder || 0;
   
@@ -54,7 +54,7 @@ const sorted = [...players].sort((a, b) => {
     return aTiebreak - bTiebreak;
   }
   
-  // Terceiro critério: manter ordem original
+  // Terceiro criterio: manter ordem original
   const indexA = players.findIndex(p => p.id === a.id);
   const indexB = players.findIndex(p => p.id === b.id);
   return indexA - indexB;
@@ -122,7 +122,7 @@ for (let i = playerIndex - 1; i >= 0; i--) {
   } else break;
 }
 
-// Adicionar o próprio jogador
+// Adicionar o proprio jogador
 tiedIndices.push(playerIndex);
 
 // Procurar para baixo
@@ -211,7 +211,7 @@ if (window.navigator && window.navigator.vibrate) {
 
 };
 
-// Guardar alterações
+// Guardar alteracoes
 const handleSave = () => {
 const finalResults = sortedPlayers.map((player, index) => ({
 …player,
@@ -244,7 +244,7 @@ if (onCancel) {
 
 };
 
-// Verificar se há empates
+// Verificar se ha empates
 const hasTies = () => {
 if (!sortedPlayers || sortedPlayers.length === 0) return false;
 
@@ -260,7 +260,7 @@ return Object.values(pointsCount).some(count => count > 1);
 
 };
 
-// Verificar se jogador está empatado
+// Verificar se jogador esta empatado
 const isPlayerTied = (playerIndex) => {
 if (!sortedPlayers || !sortedPlayers[playerIndex]) return false;
 
@@ -274,13 +274,13 @@ return samePointsCount > 1;
 
 };
 
-// Obter display da posição
+// Obter display da posicao
 const getPositionDisplay = (position) => {
 switch(position) {
 case 1: return ‘🥇’;
 case 2: return ‘🥈’;
 case 3: return ‘🥉’;
-default: return `${position}º`;
+default: return position + ‘º’;
 }
 };
 
@@ -435,7 +435,7 @@ opacity: 1;
             )}
 
             <div className="flex items-center gap-3">
-              {/* Posição */}
+              {/* Posicao */}
               <div className="flex-shrink-0 text-center min-w-[50px]">
                 <div className="text-3xl font-bold text-gray-700">
                   {getPositionDisplay(index + 1)}
@@ -468,7 +468,7 @@ opacity: 1;
                 </div>
               </div>
 
-              {/* Botões de Reordenação */}
+              {/* Botoes de Reordenacao */}
               {showReorderButtons ? (
                 <div className="flex flex-col gap-1">
                   <button
