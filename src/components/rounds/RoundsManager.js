@@ -2,108 +2,142 @@ import React, { useState, useEffect } from ‘react’;
 import { ChevronUp, ChevronDown, Trophy, Save, X, AlertCircle } from ‘lucide-react’;
 
 const RoundManagerMobile = ({
-isOpen,
-setIsOpen,
-roundData,
-players: initialPlayers,
-onSave,
-onCancel,
-roundNumber,
-tournamentName
+isOpen = false,
+setIsOpen = () => {},
+roundData = {},
+players: initialPlayers = [],
+onSave = () => {},
+onCancel = null,
+roundNumber = null,
+tournamentName = null
 }) => {
-const [players, setPlayers] = useState(initialPlayers || []);
+const [players, setPlayers] = useState([]);
 const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 const [sortedPlayers, setSortedPlayers] = useState([]);
 
-// Atualizar players quando prop mudar
+// Inicializar players
 useEffect(() => {
-if (initialPlayers) {
-setPlayers(initialPlayers.map(player => ({
-…player,
-points: player.points || 0,
-tiebreakOrder: player.tiebreakOrder || 0
-})));
+if (initialPlayers && initialPlayers.length > 0) {
+const formattedPlayers = initialPlayers.map(player => ({
+id: player.id,
+name: player.name || ‘Jogador’,
+points: typeof player.points === ‘number’ ? player.points : 0,
+tiebreakOrder: player.tiebreakOrder || 0,
+…player // Manter outras propriedades
+}));
+setPlayers(formattedPlayers);
 }
 }, [initialPlayers]);
 
 // Ordenar jogadores automaticamente por pontos + desempate manual
 useEffect(() => {
-const sorted = […players].sort((a, b) => {
-// Primeiro critério: pontos (maior para menor)
-if (b.points !== a.points) {
-return b.points - a.points;
+if (!players || players.length === 0) {
+setSortedPlayers([]);
+return;
 }
-// Segundo critério: ordem de desempate manual (se definida)
-if (a.tiebreakOrder !== 0 || b.tiebreakOrder !== 0) {
-return a.tiebreakOrder - b.tiebreakOrder;
-}
-// Terceiro critério: manter ordem original
-return players.indexOf(a) - players.indexOf(b);
+
+```
+const sorted = [...players].sort((a, b) => {
+  // Primeiro critério: pontos (maior para menor)
+  const pointsDiff = (b.points || 0) - (a.points || 0);
+  if (pointsDiff !== 0) {
+    return pointsDiff;
+  }
+  
+  // Segundo critério: ordem de desempate manual (se definida)
+  const aTiebreak = a.tiebreakOrder || 0;
+  const bTiebreak = b.tiebreakOrder || 0;
+  
+  if (aTiebreak !== 0 || bTiebreak !== 0) {
+    if (aTiebreak === 0) return 1;
+    if (bTiebreak === 0) return -1;
+    return aTiebreak - bTiebreak;
+  }
+  
+  // Terceiro critério: manter ordem original
+  const indexA = players.findIndex(p => p.id === a.id);
+  const indexB = players.findIndex(p => p.id === b.id);
+  return indexA - indexB;
 });
+
 setSortedPlayers(sorted);
+```
+
 }, [players]);
 
 // Atualizar pontos
-const updatePoints = (playerId, newPoints) => {
-const points = Math.max(0, parseInt(newPoints) || 0);
+const updatePoints = (playerId, value) => {
+const newPoints = Math.max(0, parseInt(value) || 0);
 
 ```
 setPlayers(prevPlayers => {
-  const updated = prevPlayers.map(player =>
-    player.id === playerId
-      ? { ...player, points, tiebreakOrder: 0 }
-      : player
-  );
+  if (!prevPlayers) return [];
   
-  // Resetar tiebreakOrder para todos quando pontos mudam
-  return updated.map(p => ({ ...p, tiebreakOrder: 0 }));
+  // Resetar tiebreakOrder quando pontos mudam
+  return prevPlayers.map(player => {
+    if (player.id === playerId) {
+      return { ...player, points: newPoints, tiebreakOrder: 0 };
+    }
+    return { ...player, tiebreakOrder: 0 };
+  });
 });
+
 setHasUnsavedChanges(true);
 ```
 
 };
 
-// Verificar se pode mover para cima (apenas dentro do grupo empatado)
+// Verificar se pode mover para cima
 const canMoveUp = (index) => {
-if (index === 0) return false;
-return sortedPlayers[index].points === sortedPlayers[index - 1].points;
+if (!sortedPlayers || index <= 0 || index >= sortedPlayers.length) {
+return false;
+}
+const current = sortedPlayers[index];
+const previous = sortedPlayers[index - 1];
+return current && previous && current.points === previous.points;
 };
 
-// Verificar se pode mover para baixo (apenas dentro do grupo empatado)
+// Verificar se pode mover para baixo
 const canMoveDown = (index) => {
-if (index === sortedPlayers.length - 1) return false;
-return sortedPlayers[index].points === sortedPlayers[index + 1].points;
+if (!sortedPlayers || index < 0 || index >= sortedPlayers.length - 1) {
+return false;
+}
+const current = sortedPlayers[index];
+const next = sortedPlayers[index + 1];
+return current && next && current.points === next.points;
 };
 
 // Obter grupo de jogadores empatados
 const getTiedGroup = (playerIndex) => {
-const player = sortedPlayers[playerIndex];
-const tiedPlayers = [];
+if (!sortedPlayers || !sortedPlayers[playerIndex]) return [playerIndex];
 
 ```
+const player = sortedPlayers[playerIndex];
+const tiedIndices = [];
+
 // Procurar para cima
 for (let i = playerIndex - 1; i >= 0; i--) {
-  if (sortedPlayers[i].points === player.points) {
-    tiedPlayers.unshift(i);
+  if (sortedPlayers[i] && sortedPlayers[i].points === player.points) {
+    tiedIndices.unshift(i);
   } else break;
 }
 
 // Adicionar o próprio jogador
-tiedPlayers.push(playerIndex);
+tiedIndices.push(playerIndex);
 
 // Procurar para baixo
 for (let i = playerIndex + 1; i < sortedPlayers.length; i++) {
-  if (sortedPlayers[i].points === player.points) {
-    tiedPlayers.push(i);
+  if (sortedPlayers[i] && sortedPlayers[i].points === player.points) {
+    tiedIndices.push(i);
   } else break;
 }
 
-return tiedPlayers;
+return tiedIndices;
 ```
 
 };
 
-// Mover jogador para cima (apenas entre empatados)
+// Mover jogador para cima
 const movePlayerUp = (index) => {
 if (!canMoveUp(index)) return;
 
@@ -112,19 +146,20 @@ const tiedGroup = getTiedGroup(index);
 const currentPlayer = sortedPlayers[index];
 const targetPlayer = sortedPlayers[index - 1];
 
+if (!currentPlayer || !targetPlayer) return;
+
 setPlayers(prevPlayers => {
+  if (!prevPlayers) return [];
+  
+  const currentTiebreak = currentPlayer.tiebreakOrder || tiedGroup.indexOf(index) + 1;
+  const targetTiebreak = targetPlayer.tiebreakOrder || tiedGroup.indexOf(index - 1) + 1;
+  
   return prevPlayers.map(player => {
     if (player.id === currentPlayer.id) {
-      return { 
-        ...player, 
-        tiebreakOrder: targetPlayer.tiebreakOrder || tiedGroup.indexOf(index - 1) + 1 
-      };
+      return { ...player, tiebreakOrder: targetTiebreak };
     }
     if (player.id === targetPlayer.id) {
-      return { 
-        ...player, 
-        tiebreakOrder: currentPlayer.tiebreakOrder || tiedGroup.indexOf(index) + 1 
-      };
+      return { ...player, tiebreakOrder: currentTiebreak };
     }
     return player;
   });
@@ -132,14 +167,14 @@ setPlayers(prevPlayers => {
 
 setHasUnsavedChanges(true);
 
-if (navigator.vibrate) {
-  navigator.vibrate(50);
+if (window.navigator && window.navigator.vibrate) {
+  window.navigator.vibrate(50);
 }
 ```
 
 };
 
-// Mover jogador para baixo (apenas entre empatados)
+// Mover jogador para baixo
 const movePlayerDown = (index) => {
 if (!canMoveDown(index)) return;
 
@@ -148,19 +183,20 @@ const tiedGroup = getTiedGroup(index);
 const currentPlayer = sortedPlayers[index];
 const targetPlayer = sortedPlayers[index + 1];
 
+if (!currentPlayer || !targetPlayer) return;
+
 setPlayers(prevPlayers => {
+  if (!prevPlayers) return [];
+  
+  const currentTiebreak = currentPlayer.tiebreakOrder || tiedGroup.indexOf(index) + 1;
+  const targetTiebreak = targetPlayer.tiebreakOrder || tiedGroup.indexOf(index + 1) + 1;
+  
   return prevPlayers.map(player => {
     if (player.id === currentPlayer.id) {
-      return { 
-        ...player, 
-        tiebreakOrder: targetPlayer.tiebreakOrder || tiedGroup.indexOf(index + 1) + 1 
-      };
+      return { ...player, tiebreakOrder: targetTiebreak };
     }
     if (player.id === targetPlayer.id) {
-      return { 
-        ...player, 
-        tiebreakOrder: currentPlayer.tiebreakOrder || tiedGroup.indexOf(index) + 1 
-      };
+      return { ...player, tiebreakOrder: currentTiebreak };
     }
     return player;
   });
@@ -168,8 +204,8 @@ setPlayers(prevPlayers => {
 
 setHasUnsavedChanges(true);
 
-if (navigator.vibrate) {
-  navigator.vibrate(50);
+if (window.navigator && window.navigator.vibrate) {
+  window.navigator.vibrate(50);
 }
 ```
 
@@ -183,10 +219,7 @@ finalPosition: index + 1
 }));
 
 ```
-if (onSave) {
-  onSave(finalResults);
-}
-
+onSave(finalResults);
 setHasUnsavedChanges(false);
 ```
 
@@ -195,7 +228,8 @@ setHasUnsavedChanges(false);
 // Cancelar
 const handleCancel = () => {
 if (hasUnsavedChanges) {
-if (!confirm(‘Tem alterações não guardadas. Deseja sair?’)) {
+const confirmExit = window.confirm(‘Tem alterações não guardadas. Deseja sair?’);
+if (!confirmExit) {
 return;
 }
 }
@@ -212,37 +246,118 @@ if (onCancel) {
 
 // Verificar se há empates
 const hasTies = () => {
+if (!sortedPlayers || sortedPlayers.length === 0) return false;
+
+```
 const pointsCount = {};
 sortedPlayers.forEach(player => {
-pointsCount[player.points] = (pointsCount[player.points] || 0) + 1;
+  const points = player.points || 0;
+  pointsCount[points] = (pointsCount[points] || 0) + 1;
 });
+
 return Object.values(pointsCount).some(count => count > 1);
+```
+
 };
 
 // Verificar se jogador está empatado
 const isPlayerTied = (playerIndex) => {
+if (!sortedPlayers || !sortedPlayers[playerIndex]) return false;
+
+```
 const player = sortedPlayers[playerIndex];
-return sortedPlayers.filter(p => p.points === player.points).length > 1;
+const playerPoints = player.points || 0;
+const samePointsCount = sortedPlayers.filter(p => (p.points || 0) === playerPoints).length;
+
+return samePointsCount > 1;
+```
+
 };
 
 // Obter display da posição
 const getPositionDisplay = (position) => {
-if (position === 1) return ‘🥇’;
-if (position === 2) return ‘🥈’;
-if (position === 3) return ‘🥉’;
-return `${position}º`;
+switch(position) {
+case 1: return ‘🥇’;
+case 2: return ‘🥈’;
+case 3: return ‘🥉’;
+default: return `${position}º`;
+}
 };
 
 // Calcular total de pontos
-const totalPoints = sortedPlayers.reduce((sum, player) => sum + player.points, 0);
+const totalPoints = sortedPlayers.reduce((sum, player) => {
+return sum + (player.points || 0);
+}, 0);
 
 if (!isOpen) return null;
 
 return (
-<div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50">
-<div className="bg-white w-full sm:max-w-lg sm:mx-4 rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[95vh] sm:max-h-[85vh] flex flex-col animate-slideUp sm:animate-fadeIn">
+<div className="fixed inset-0 bg-black bg-opacity-60 flex items-end sm:items-center justify-center z-50">
+<style>{`
+@keyframes slideUp {
+from {
+transform: translateY(100%);
+opacity: 0;
+}
+to {
+transform: translateY(0);
+opacity: 1;
+}
+}
 
 ```
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: scale(0.95);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    .animate-slideUp {
+      animation: slideUp 0.3s ease-out;
+    }
+
+    .animate-fadeIn {
+      animation: fadeIn 0.2s ease-out;
+    }
+
+    .safe-area-pb {
+      padding-bottom: env(safe-area-inset-bottom, 1rem);
+    }
+
+    .overscroll-contain {
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    @media (hover: none) and (pointer: coarse) {
+      button {
+        -webkit-tap-highlight-color: transparent;
+      }
+    }
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .animate-pulse {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  `}</style>
+
+  <div className="bg-white w-full sm:max-w-lg sm:mx-4 rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[95vh] sm:max-h-[85vh] flex flex-col animate-slideUp sm:animate-fadeIn">
+    
     {/* Header */}
     <div className="flex-shrink-0">
       <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-5 sm:p-6 rounded-t-3xl sm:rounded-t-2xl">
@@ -260,13 +375,13 @@ return (
                 Total: {totalPoints} pts
               </p>
               <p className="text-blue-100 text-sm">
-                {players.length} jogadores
+                {sortedPlayers.length} jogadores
               </p>
             </div>
           </div>
           <button
             onClick={handleCancel}
-            className="p-2 hover:bg-white/20 rounded-xl transition-colors active:scale-90"
+            className="p-2 hover:bg-white hover:bg-opacity-20 rounded-xl transition-colors"
             aria-label="Fechar"
           >
             <X className="w-6 h-6 text-white" />
@@ -300,21 +415,20 @@ return (
         
         return (
           <div
-            key={player.id}
+            key={`player-${player.id}`}
             className={`
               relative rounded-2xl p-4 transition-all transform
               ${isTied 
                 ? 'bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 shadow-md' 
                 : 'bg-white border-2 border-gray-200 shadow-sm'
               }
-              ${index === 0 ? 'scale-[1.02]' : ''}
-              active:scale-[0.98]
+              ${index === 0 ? 'scale-105' : ''}
             `}
           >
             {/* Badge de empate */}
             {isTied && (
               <div className="absolute -top-2 -right-2">
-                <span className="bg-amber-500 text-white text-[10px] font-bold px-2 py-1 rounded-full">
+                <span className="bg-amber-500 text-white text-xs font-bold px-2 py-1 rounded-full">
                   EMPATE
                 </span>
               </div>
@@ -339,7 +453,7 @@ return (
                     type="number"
                     inputMode="numeric"
                     pattern="[0-9]*"
-                    value={player.points}
+                    value={player.points || 0}
                     onChange={(e) => updatePoints(player.id, e.target.value)}
                     className={`
                       w-20 px-3 py-2 text-center font-bold text-lg
@@ -348,7 +462,7 @@ return (
                         ? 'border-amber-400 bg-amber-50 focus:border-amber-500' 
                         : 'border-gray-300 bg-gray-50 focus:border-blue-500'
                       }
-                      focus:outline-none focus:ring-4 focus:ring-blue-500/20
+                      focus:outline-none focus:ring-4 focus:ring-opacity-20
                     `}
                   />
                 </div>
@@ -356,15 +470,15 @@ return (
 
               {/* Botões de Reordenação */}
               {showReorderButtons ? (
-                <div className="flex flex-col gap-1.5">
+                <div className="flex flex-col gap-1">
                   <button
                     onClick={() => movePlayerUp(index)}
                     disabled={!canGoUp}
                     className={`
-                      p-2.5 rounded-xl transition-all transform
+                      p-2 rounded-xl transition-all transform
                       ${!canGoUp
                         ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
-                        : 'bg-amber-100 text-amber-600 hover:bg-amber-200 active:scale-90'
+                        : 'bg-amber-100 text-amber-600 hover:bg-amber-200 active:scale-95'
                       }
                     `}
                     aria-label="Subir no desempate"
@@ -375,10 +489,10 @@ return (
                     onClick={() => movePlayerDown(index)}
                     disabled={!canGoDown}
                     className={`
-                      p-2.5 rounded-xl transition-all transform
+                      p-2 rounded-xl transition-all transform
                       ${!canGoDown
                         ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
-                        : 'bg-amber-100 text-amber-600 hover:bg-amber-200 active:scale-90'
+                        : 'bg-amber-100 text-amber-600 hover:bg-amber-200 active:scale-95'
                       }
                     `}
                     aria-label="Descer no desempate"
@@ -387,7 +501,7 @@ return (
                   </button>
                 </div>
               ) : (
-                <div className="w-[52px]"></div>
+                <div className="w-12"></div>
               )}
             </div>
           </div>
@@ -400,13 +514,13 @@ return (
       <div className="flex gap-3">
         <button
           onClick={handleCancel}
-          className="flex-1 px-4 py-3.5 bg-white border-2 border-gray-300 text-gray-700 rounded-2xl font-semibold hover:bg-gray-100 transition-colors active:scale-95"
+          className="flex-1 px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-2xl font-semibold hover:bg-gray-100 transition-colors"
         >
           Cancelar
         </button>
         <button
           onClick={handleSave}
-          className="flex-1 px-4 py-3.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-2xl font-semibold hover:from-blue-700 hover:to-blue-800 transition-all active:scale-95 flex items-center justify-center gap-2 shadow-lg"
+          className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-2xl font-semibold hover:from-blue-700 hover:to-blue-800 transition-all flex items-center justify-center gap-2 shadow-lg"
         >
           <Save className="w-5 h-5" />
           Guardar
@@ -425,123 +539,4 @@ return (
 );
 };
 
-// CSS Global (adicionar ao teu ficheiro de estilos global)
-const globalStyles = `
-@keyframes slideUp {
-from {
-transform: translateY(100%);
-opacity: 0;
-}
-to {
-transform: translateY(0);
-opacity: 1;
-}
-}
-
-@keyframes fadeIn {
-from {
-opacity: 0;
-transform: scale(0.95);
-}
-to {
-opacity: 1;
-transform: scale(1);
-}
-}
-
-.animate-slideUp {
-animation: slideUp 0.3s ease-out;
-}
-
-.animate-fadeIn {
-animation: fadeIn 0.2s ease-out;
-}
-
-.safe-area-pb {
-padding-bottom: env(safe-area-inset-bottom, 1rem);
-}
-
-.overscroll-contain {
-overscroll-behavior: contain;
--webkit-overflow-scrolling: touch;
-}
-
-@media (hover: none) and (pointer: coarse) {
-button {
--webkit-tap-highlight-color: transparent;
-}
-}
-
-input[type=“number”]::-webkit-inner-spin-button,
-input[type=“number”]::-webkit-outer-spin-button {
--webkit-appearance: none;
-margin: 0;
-}
-
-@keyframes pulse {
-0%, 100% { opacity: 1; }
-50% { opacity: 0.5; }
-}
-
-.animate-pulse {
-animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-`;
-
 export default RoundManagerMobile;
-
-// Exemplo de como usar o componente:
-/*
-import RoundManagerMobile from ‘./RoundManagerMobile’;
-
-function App() {
-const [isRoundManagerOpen, setIsRoundManagerOpen] = useState(false);
-
-// Os teus dados reais do backend/estado
-const currentPlayers = [
-{ id: 1, name: ‘João Silva’, points: 0 },
-{ id: 2, name: ‘Maria Santos’, points: 0 },
-// … mais jogadores
-];
-
-const handleSaveRound = async (finalResults) => {
-try {
-// Enviar para o backend
-await api.post(’/rounds/save’, {
-roundId: currentRound.id,
-results: finalResults
-});
-
-```
-  // Atualizar estado local
-  setPlayers(finalResults);
-  setIsRoundManagerOpen(false);
-  toast.success('Ronda guardada com sucesso!');
-} catch (error) {
-  toast.error('Erro ao guardar ronda');
-}
-```
-
-};
-
-return (
-<>
-<button onClick={() => setIsRoundManagerOpen(true)}>
-Gerir Ronda
-</button>
-
-```
-  <RoundManagerMobile
-    isOpen={isRoundManagerOpen}
-    setIsOpen={setIsRoundManagerOpen}
-    players={currentPlayers}
-    onSave={handleSaveRound}
-    roundNumber={1}
-    tournamentName="Torneio de Verão 2024"
-  />
-</>
-```
-
-);
-}
-*/
