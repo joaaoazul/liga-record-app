@@ -247,7 +247,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
       for (const player of safePlayers) {
         const result = finalParticipants.find(p => p.playerId === player.id);
         
-        if (result && result.points > 0) {
+        if (result) {
           // Verificar duplicação
           const playerRounds = player.rounds || [];
           const roundExists = playerRounds.some(r => r.roundId === roundId);
