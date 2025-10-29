@@ -14,7 +14,7 @@ const getWeekNumber = (date = new Date()) => {
   return Math.ceil((((date - onejan) / 86400000) + onejan.getDay() + 1) / 7);
 };
 
-const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
+const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) => {
   // Estados principais
   const [allRounds, setAllRounds] = useState([]);
   const [activeRound, setActiveRound] = useState(null);
@@ -91,9 +91,17 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
   }, [loadAllRounds, refreshKey]);
 
   // Função para forçar refresh
-  const forceRefresh = () => {
+  const forceRefresh = useCallback(async () => {
     setRefreshKey(prev => prev + 1);
-  };
+
+    if (typeof onReload === 'function') {
+      try {
+        await onReload();
+      } catch (error) {
+        console.error('❌ Erro ao atualizar dados externos:', error);
+      }
+    }
+  }, [onReload]);
 
   // Helpers para obter dados
   const getCompletedRounds = () => allRounds.filter(r => r.status === 'completed');
@@ -333,6 +341,14 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
       if (onUpdatePlayers) {
         onUpdatePlayers(updatedPlayers);
       }
+
+      if (typeof onReload === 'function') {
+        try {
+          await onReload();
+        } catch (error) {
+          console.error('❌ Erro ao recarregar dados externos:', error);
+        }
+      }
       
       // Processar pagamentos automáticos se houver
       if (autoPaymentCandidates.length > 0) {
@@ -396,6 +412,14 @@ const RoundsManager = ({ players = [], onUpdatePlayers, settings }) => {
       if (onUpdatePlayers) {
         const updatedPlayers = await firestoreService.getPlayers();
         onUpdatePlayers(updatedPlayers);
+      }
+
+      if (typeof onReload === 'function') {
+        try {
+          await onReload();
+        } catch (error) {
+          console.error('❌ Erro ao recarregar dados externos:', error);
+        }
       }
       
       alert('💳 Pagamentos automáticos processados com sucesso!');
