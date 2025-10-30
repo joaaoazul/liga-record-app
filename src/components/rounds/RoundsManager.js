@@ -247,14 +247,24 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
         throw new Error('Falha ao atualizar ronda');
       }
       
+      // Obter versão mais recente dos jogadores diretamente do Firestore para evitar dados desatualizados
+      const freshPlayers = await firestoreService.getPlayers();
+      const playersToProcess = Array.isArray(freshPlayers) && freshPlayers.length > 0
+        ? freshPlayers
+        : safePlayers;
+
+      if (!playersToProcess || playersToProcess.length === 0) {
+        throw new Error('Nenhum jogador encontrado para atualizar');
+      }
+
       // Processar atualizações dos jogadores
       console.log('👥 Atualizando jogadores...');
       const updatedPlayers = [];
       const autoPaymentCandidates = [];
-      
-      for (const player of safePlayers) {
+
+      for (const player of playersToProcess) {
         const result = finalParticipants.find(p => p.playerId === player.id);
-        
+
         if (result) {
           // Verificar duplicação
           const playerRounds = player.rounds || [];
