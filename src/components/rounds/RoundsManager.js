@@ -294,24 +294,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
           
           // Verificar pagamento automático (a cada 5 rondas)
           const unpaidRounds = updatedRounds.filter(r => !r.autoPaid && r.payment > 0);
-          
-          if (unpaidRounds.length >= 5) {
-            const roundsToPay = unpaidRounds.slice(0, 5);
-            const totalDebt = roundsToPay.reduce((sum, r) => sum + r.payment, 0);
-            
-            autoPaymentCandidates.push({
-              player: player,
-              roundsToPay: roundsToPay,
-              totalAmount: totalDebt,
-              newBalance: newBalance + totalDebt,
-              updatedRounds: updatedRounds.map(r => 
-                roundsToPay.some(rtp => rtp.roundId === r.roundId) 
-                  ? { ...r, autoPaid: true }
-                  : r
-              )
-            });
-          }
-          
+
           // Atualizar jogador
           const updatedPlayer = {
             ...player,
@@ -320,10 +303,29 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
             totalPoints: (player.totalPoints || 0) + result.points,
             totalRounds: (player.totalRounds || 0) + 1
           };
-          
+
           // Salvar no Firebase
           await firestoreService.savePlayer(updatedPlayer);
           updatedPlayers.push(updatedPlayer);
+
+          if (unpaidRounds.length >= 5) {
+            const roundsToPay = unpaidRounds.slice(0, 5);
+            const totalDebt = roundsToPay.reduce((sum, r) => sum + r.payment, 0);
+            const autoPaidRounds = updatedPlayer.rounds.map(r =>
+              roundsToPay.some(rtp => rtp.roundId === r.roundId)
+                ? { ...r, autoPaid: true }
+                : r
+            );
+            const finalBalance = updatedPlayer.balance + totalDebt;
+
+            autoPaymentCandidates.push({
+              player: updatedPlayer,
+              roundsToPay,
+              totalAmount: totalDebt,
+              finalBalance,
+              updatedRounds: autoPaidRounds
+            });
+          }
           
           // Adicionar transação se houver pagamento
           if (result.weeklyPayment > 0) {
@@ -388,17 +390,17 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
       console.log('💳 Processando pagamentos automáticos...');
       
       for (const candidate of candidates) {
-        const { player, roundsToPay, totalAmount, newBalance, updatedRounds } = candidate;
-        
+        const { player, roundsToPay, totalAmount, finalBalance, updatedRounds } = candidate;
+
         // Atualizar jogador
         const updatedPlayer = {
           ...player,
-          balance: newBalance,
+          balance: finalBalance,
           rounds: updatedRounds
         };
-        
+
         await firestoreService.savePlayer(updatedPlayer);
-        
+
         // Adicionar transação
         await firestoreService.addTransaction({
           playerId: player.id,
@@ -406,10 +408,10 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
           type: 'payment',
           amount: totalAmount,
           note: `Pagamento automático - ${roundsToPay.length} rondas`,
-          balanceAfter: newBalance,
+          balanceAfter: finalBalance,
           date: new Date().toISOString()
         });
-        
+
         console.log(`✅ Pagamento processado: ${player.name} +${totalAmount.toFixed(2)}€`);
       }
       
@@ -1566,7 +1568,7 @@ const AutoPaymentModal = ({ candidates, onConfirm, onCancel, loading }) => {
           <h4 className="font-semibold text-gray-700">
             Jogadores com pagamentos pendentes:
           </h4>
-          {candidates.map(({ player, roundsToPay, totalAmount }) => (
+          {candidates.map(({ player, roundsToPay, totalAmount, finalBalance }) => (
             <div key={player.id} className="bg-gray-50 rounded-lg p-3">
               <div className="flex justify-between items-center">
                 <div>
@@ -1580,7 +1582,7 @@ const AutoPaymentModal = ({ candidates, onConfirm, onCancel, loading }) => {
                     +{totalAmount.toFixed(2)}€
                   </p>
                   <p className="text-xs text-gray-500">
-                    Novo saldo: {((player.balance || 0) + totalAmount).toFixed(2)}€
+                    Novo saldo: {finalBalance.toFixed(2)}€
                   </p>
                 </div>
               </div>
