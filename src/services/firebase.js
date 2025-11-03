@@ -115,7 +115,7 @@ export const firestoreService = {
       
       // Filtrar por userId se existir
       if (userId) {
-        players = players.filter(p => p.userId === userId);
+        players = players.filter(p => !p.userId || p.userId === userId);
       }
       
       console.log('📊 Total players found:', players.length);
@@ -243,7 +243,7 @@ export const firestoreService = {
       
       // Filtrar por userId se existir
       if (userId) {
-        rounds = rounds.filter(r => r.userId === userId);
+        rounds = rounds.filter(r => !r.userId || r.userId === userId);
       }
       
       // Ordenar por data de criação
@@ -300,8 +300,10 @@ export const firestoreService = {
         ...roundData,
         userId: userId || 'anonymous',
         createdAt: new Date().toISOString(),
-        status: 'active',
-        participants: []
+        status: roundData.status || 'active',
+        participants: Array.isArray(roundData.participants)
+          ? roundData.participants
+          : []
       };
       
       const docRef = await addDoc(collection(db, 'rounds'), round);
@@ -360,7 +362,7 @@ export const firestoreService = {
       
       // Filtrar por userId se existir
       if (userId) {
-        transactions = transactions.filter(t => t.userId === userId);
+        transactions = transactions.filter(t => !t.userId || t.userId === userId);
       }
       
       // Ordenar por data

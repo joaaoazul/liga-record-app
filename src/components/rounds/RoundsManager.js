@@ -249,11 +249,26 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
       
       // Obter versão mais recente dos jogadores diretamente do Firestore para evitar dados desatualizados
       const freshPlayers = await firestoreService.getPlayers();
-      const playersToProcess = Array.isArray(freshPlayers) && freshPlayers.length > 0
-        ? freshPlayers
-        : safePlayers;
+      const playersMap = new Map();
 
-      if (!playersToProcess || playersToProcess.length === 0) {
+      safePlayers.forEach(player => {
+        if (player?.id) {
+          playersMap.set(player.id, player);
+        }
+      });
+
+      if (Array.isArray(freshPlayers)) {
+        freshPlayers.forEach(player => {
+          if (player?.id) {
+            const existing = playersMap.get(player.id) || {};
+            playersMap.set(player.id, { ...existing, ...player });
+          }
+        });
+      }
+
+      const playersToProcess = Array.from(playersMap.values());
+
+      if (playersToProcess.length === 0) {
         throw new Error('Nenhum jogador encontrado para atualizar');
       }
 
