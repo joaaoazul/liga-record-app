@@ -623,46 +623,83 @@ export const firestoreService = {
     try {
       const userId = getCurrentUserId();
       console.log('📊 Generating financial report');
-      
+
       // Buscar todos os dados necessários
       const [players, transactions, rounds] = await Promise.all([
         this.getPlayers(),
         this.getTransactions(),
         this.getRounds()
       ]);
-      
+
+      const toNumber = (value) => {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : 0;
+      };
+
       // Calcular estatísticas
       const completedRounds = rounds.filter(r => r.status === 'completed');
-      
+
+      const season = completedRounds.find(r => r.year)?.year || new Date().getFullYear();
+
       const playerSummary = players.map(player => {
         const playerTransactions = transactions.filter(t => t.playerId === player.id);
         const totalDebts = playerTransactions
           .filter(t => t.type === 'debt')
-          .reduce((sum, t) => sum + t.amount, 0);
+          .reduce((sum, t) => sum + toNumber(t.amount), 0);
         const totalPayments = playerTransactions
           .filter(t => t.type === 'payment')
-          .reduce((sum, t) => sum + t.amount, 0);
-        
+          .reduce((sum, t) => sum + toNumber(t.amount), 0);
+
+        const currentBalance = toNumber(
+          player.balance !== undefined && player.balance !== null
+            ? player.balance
+            : totalPayments - totalDebts
+        );
+
+        const totalOwed = Math.max(0, -currentBalance);
+        const netBalance = currentBalance;
+        const roundsPlayed =
+          player.totalRounds !== undefined
+            ? player.totalRounds
+            : Array.isArray(player.rounds)
+              ? player.rounds.length
+              : 0;
+
         return {
           playerId: player.id,
           playerName: player.name,
-          currentBalance: player.balance || 0,
+          currentBalance,
           totalDebts,
           totalPayments,
-          netBalance: totalPayments - totalDebts,
-          roundsPlayed: player.totalRounds || 0,
-          totalPoints: player.totalPoints || 0
+          totalPaid: totalPayments,
+          totalOwed,
+          netBalance,
+          roundsPlayed,
+          totalPoints: toNumber(player.totalPoints)
         };
       });
-      
+
+      const totalToCollect = playerSummary.reduce((sum, p) => sum + toNumber(p.totalOwed), 0);
+      const totalToPay = playerSummary.reduce(
+        (sum, p) => sum + Math.max(0, toNumber(p.netBalance)),
+        0
+      );
+      const netBalanceTotal = playerSummary.reduce(
+        (sum, p) => sum + toNumber(p.netBalance),
+        0
+      );
+
       const totals = {
         totalPlayers: players.length,
         totalRounds: completedRounds.length,
         totalDebt: playerSummary.reduce((sum, p) => sum + Math.max(0, -p.currentBalance), 0),
         totalCredit: playerSummary.reduce((sum, p) => sum + Math.max(0, p.currentBalance), 0),
-        dinnerPot: Math.abs(playerSummary.reduce((sum, p) => sum + p.currentBalance, 0))
+        dinnerPot: Math.abs(netBalanceTotal),
+        totalToCollect,
+        totalToPay,
+        netBalance: netBalanceTotal
       };
-      
+
       const reportData = {
         leagueId,
         userId,
@@ -670,17 +707,73 @@ export const firestoreService = {
         playerSummary,
         totals,
         rounds: completedRounds.length,
-        status: 'generated'
+        status: 'generated',
+        season
       };
-      
+
       // Guardar relatório
       const docRef = await addDoc(collection(db, 'reports'), reportData);
-      
+
       console.log('✅ Financial report generated:', docRef.id);
       return { success: true, reportId: docRef.id, data: reportData };
     } catch (error) {
       console.error('❌ Error generating report:', error);
       return { success: false, error: error.message };
+    }
+  },
+
+  async getFinancialReports(limitCount = 12) {
+    try {
+      const userId = getCurrentUserId();
+      console.log('📄 Getting financial reports for user:', userId);
+
+      const reportsQuery = query(
+        collection(db, 'reports'),
+        orderBy('generatedAt', 'desc'),
+        limit(limitCount)
+      );
+
+      const snapshot = await getDocs(reportsQuery);
+
+      let reports = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      if (userId) {
+        reports = reports.filter(report => !report.userId || report.userId === userId);
+      }
+
+      console.log('📊 Financial reports found:', reports.length);
+      return reports;
+    } catch (error) {
+      console.error('❌ Error getting financial reports:', error);
+      return [];
+    }
+  },
+
+  async getFinancialReport(reportId) {
+    try {
+      if (!reportId) {
+        console.warn('⚠️ No reportId provided for getFinancialReport');
+        return null;
+      }
+
+      const reportRef = doc(db, 'reports', reportId);
+      const reportDoc = await getDoc(reportRef);
+
+      if (!reportDoc.exists()) {
+        console.warn('⚠️ Financial report not found:', reportId);
+        return null;
+      }
+
+      return {
+        id: reportDoc.id,
+        ...reportDoc.data()
+      };
+    } catch (error) {
+      console.error('❌ Error getting financial report:', error);
+      return null;
     }
   }
 };
