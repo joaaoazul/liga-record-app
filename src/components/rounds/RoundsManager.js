@@ -233,6 +233,31 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
         position: participant.position || index + 1,
         weeklyPayment: round.paymentStructure?.[index] || 0
       }));
+
+      // Garantir que todos os participantes originais da ronda recebem um registo
+      const originalParticipants = Array.isArray(round.participants)
+        ? round.participants
+        : [];
+
+      const missingParticipants = originalParticipants.filter((participant) =>
+        participant?.playerId &&
+        !finalParticipants.some((finalParticipant) => finalParticipant.playerId === participant.playerId)
+      );
+
+      if (missingParticipants.length > 0) {
+        console.warn(
+          `⚠️ Foram encontrados ${missingParticipants.length} participantes sem resultados explícitos. Atribuindo valores padrão.`
+        );
+
+        missingParticipants.forEach((participant) => {
+          finalParticipants.push({
+            ...participant,
+            points: participant.points ?? 0,
+            position: participant.position || null,
+            weeklyPayment: 0
+          });
+        });
+      }
       
       // Atualizar ronda no Firebase PRIMEIRO
       console.log('📝 Atualizando status da ronda...');
