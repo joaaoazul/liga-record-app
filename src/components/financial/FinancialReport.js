@@ -1,5 +1,5 @@
 // src/components/financial/FinancialReport.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { FileText, Download, Share2, DollarSign, Users, TrendingUp, AlertCircle } from 'lucide-react';
 import { firestoreService } from '../../services/firebase';
 import { useAuth } from '../../hooks/useAuth';
@@ -13,10 +13,10 @@ const FinancialReport = ({ onBack, players }) => {
   const { user } = useAuth();
 
   // IDs dos admins - SUBSTITUI COM OS VOSSOS IDs REAIS
-  const ADMIN_ID = 'SEU_USER_ID_AQUI';
-  const MANAGER_ID = 'RICARDO_USER_ID_AQUI';
+  const ADMIN_IDS = ['SEU_USER_ID_AQUI', 'RICARDO_USER_ID_AQUI']
+    .filter(id => id && !id.includes('AQUI'));
 
-  const isAdmin = user?.uid === ADMIN_ID || user?.uid === MANAGER_ID;
+  const isAdmin = ADMIN_IDS.length === 0 || ADMIN_IDS.includes(user?.uid);
 
   useEffect(() => {
     loadReports();
@@ -71,129 +71,111 @@ const FinancialReport = ({ onBack, players }) => {
     }
   };
 
-  // src/components/financial/FinancialReport.js - Modifica a função shareWhatsApp
+  const shareWhatsApp = useCallback(() => {
+    if (!selectedReport) {
+      alert('Nenhum relatório selecionado!');
+      return;
+    }
 
+    if (!selectedReport.playerSummary || selectedReport.playerSummary.length === 0) {
+      alert('❌ Relatório sem dados de jogadores!');
+      return;
+    }
 
-const shareWhatsApp = () => {
-  if (!selectedReport) {
-    alert('Nenhum relatório selecionado!');
-    return;
-  }
-  
-  // Verificar se os dados existem
-  if (!selectedReport.playerSummary || selectedReport.playerSummary.length === 0) {
-    alert('❌ Relatório sem dados de jogadores!');
-    return;
-  }
-  
-  // Ordenar jogadores: primeiro quem deve, depois quem recebe
-  const sortedPlayers = [...selectedReport.playerSummary].sort((a, b) => {
-    const balanceA = a.netBalance || a.currentBalance || 0;
-    const balanceB = b.netBalance || b.currentBalance || 0;
-    return balanceA - balanceB;
-  });
-  
-  // Separar devedores e credores
-  const devedores = sortedPlayers.filter(p => (p.totalOwed || 0) > 0);
-  const credores = sortedPlayers.filter(p => (p.netBalance || p.currentBalance || 0) > 0);
-  const neutros = sortedPlayers.filter(p => {
-    const balance = p.netBalance || p.currentBalance || 0;
-    const owed = p.totalOwed || 0;
-    return balance === 0 && owed === 0;
-  });
-  
-  // Construir mensagem estilizada
-  let message = `⚽ *LIGA RECORD DOS CUÍCOS* ⚽\n`;
-  message += `━━━━━━━━━━━━━━━━━━━━\n`;
-  message += `📊 *ACERTO DE CONTAS*\n`;
-  message += `🗓️ _${new Date().toLocaleDateString('pt-PT', { 
-    day: 'numeric', 
-    month: 'long', 
-    year: 'numeric' 
-  })}_\n`;
-  message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
-  
-  // Seção de quem deve pagar
-  if (devedores.length > 0) {
-    message += `💸 *DEVEM PAGAR:*\n`;
-    message += `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n`;
-    devedores.forEach((player, index) => {
-      const owed = player.totalOwed || 0;
-      // Usar emojis diferentes para variar
-      const emoji = index % 2 === 0 ? '👉' : '▶️';
-      message += `${emoji} *${player.playerName}*\n`;
-      message += `     └─ €${owed.toFixed(2)} 💶\n`;
+    const sortedPlayers = [...selectedReport.playerSummary].sort((a, b) => {
+      const balanceA = a.netBalance || a.currentBalance || 0;
+      const balanceB = b.netBalance || b.currentBalance || 0;
+      return balanceA - balanceB;
     });
-    message += `\n`;
-  }
-  
-  // Seção de quem vai receber
-  if (credores.length > 0) {
-    message += `💰 *VÃO RECEBER:*\n`;
-    message += `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n`;
-    credores.forEach((player, index) => {
-      const receive = player.netBalance || player.currentBalance || 0;
-      const emoji = index % 2 === 0 ? '✅' : '🎯';
-      message += `${emoji} *${player.playerName}*\n`;
-      message += `     └─ €${receive.toFixed(2)} 💵\n`;
+
+    const devedores = sortedPlayers.filter(p => (p.totalOwed || 0) > 0);
+    const credores = sortedPlayers.filter(p => (p.netBalance || p.currentBalance || 0) > 0);
+    const neutros = sortedPlayers.filter(p => {
+      const balance = p.netBalance || p.currentBalance || 0;
+      const owed = p.totalOwed || 0;
+      return balance === 0 && owed === 0;
     });
-    message += `\n`;
-  }
-  
-  // Seção dos neutros (se houver)
-  if (neutros.length > 0 && neutros.length <= 3) { // Só mostrar se forem poucos
-    message += `⚖️ *EQUILIBRADOS:*\n`;
-    neutros.forEach(player => {
-      message += `• ${player.playerName}\n`;
+
+    let message = `⚽ *LIGA RECORD DOS CUÍCOS* ⚽\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━\n`;
+    message += `📊 *ACERTO DE CONTAS*\n`;
+    message += `🗓️ _${new Date().toLocaleDateString('pt-PT', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    })}_\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    if (devedores.length > 0) {
+      message += `💸 *DEVEM PAGAR:*\n`;
+      message += `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n`;
+      devedores.forEach((player, index) => {
+        const owed = player.totalOwed || 0;
+        const emoji = index % 2 === 0 ? '👉' : '▶️';
+        message += `${emoji} *${player.playerName}*\n`;
+        message += `     └─ €${owed.toFixed(2)} 💶\n`;
+      });
+      message += `\n`;
+    }
+
+    if (credores.length > 0) {
+      message += `💰 *VÃO RECEBER:*\n`;
+      message += `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n`;
+      credores.forEach((player, index) => {
+        const receive = player.netBalance || player.currentBalance || 0;
+        const emoji = index % 2 === 0 ? '✅' : '🎯';
+        message += `${emoji} *${player.playerName}*\n`;
+        message += `     └─ €${receive.toFixed(2)} 💵\n`;
+      });
+      message += `\n`;
+    }
+
+    if (neutros.length > 0 && neutros.length <= 3) {
+      message += `⚖️ *EQUILIBRADOS:*\n`;
+      neutros.forEach(player => {
+        message += `• ${player.playerName}\n`;
+      });
+      message += `\n`;
+    }
+
+    message += `━━━━━━━━━━━━━━━━━━━━\n`;
+    message += `📈 *RESUMO FINAL*\n`;
+    message += `├─ 💸 Total: *€${(selectedReport.totals?.totalToCollect || 0).toFixed(2)}*\n`;
+    message += `├─ 👥 Jogadores: *${selectedReport.playerSummary.length}*\n`;
+    message += `└─ 🏆 Época: *${selectedReport.season || new Date().getFullYear()}*\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    message += `_Gerado automaticamente_\n`;
+    message += `🤖 _Liga Record System_`;
+
+    const encodedMessage = encodeURIComponent(message);
+    const whatsappUrl = `https://wa.me/?text=${encodedMessage}`;
+
+    console.log('📱 Tamanho da mensagem:', message.length, 'caracteres');
+    console.log('📱 Tamanho da URL:', whatsappUrl.length, 'caracteres');
+
+    if (whatsappUrl.length > 6000) {
+      let compactMessage = `⚽ *LIGA RECORD* ⚽\n\n`;
+      compactMessage += `💸 *PAGAMENTOS:*\n`;
+      devedores.forEach(p => {
+        compactMessage += `${p.playerName}: -€${p.totalOwed.toFixed(2)}\n`;
+      });
+      compactMessage += `\n💰 *RECEBEM:*\n`;
+      credores.forEach(p => {
+        const amount = p.netBalance || p.currentBalance || 0;
+        compactMessage += `${p.playerName}: +€${amount.toFixed(2)}\n`;
+      });
+      compactMessage += `\n*TOTAL: €${(selectedReport.totals?.totalToCollect || 0).toFixed(2)}*`;
+
+      window.open(`https://wa.me/?text=${encodeURIComponent(compactMessage)}`, '_blank');
+    } else {
+      window.open(whatsappUrl, '_blank');
+    }
+
+    navigator.clipboard.writeText(message).catch(() => {
+      console.log('Não foi possível copiar para clipboard');
     });
-    message += `\n`;
-  }
-  
-  // Resumo final
-  message += `━━━━━━━━━━━━━━━━━━━━\n`;
-  message += `📈 *RESUMO FINAL*\n`;
-  message += `├─ 💸 Total: *€${(selectedReport.totals?.totalToCollect || 0).toFixed(2)}*\n`;
-  message += `├─ 👥 Jogadores: *${selectedReport.playerSummary.length}*\n`;
-  message += `└─ 🏆 Época: *${selectedReport.season || new Date().getFullYear()}*\n`;
-  message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
-  
-  // Assinatura
-  message += `_Gerado automaticamente_\n`;
-  message += `🤖 _Liga Record System_`;
-  
-  // Verificar tamanho e enviar
-  const encodedMessage = encodeURIComponent(message);
-  const whatsappUrl = `https://wa.me/?text=${encodedMessage}`;
-  
-  console.log('📱 Tamanho da mensagem:', message.length, 'caracteres');
-  console.log('📱 Tamanho da URL:', whatsappUrl.length, 'caracteres');
-  
-  if (whatsappUrl.length > 6000) {
-    // Versão ultra compacta se ainda for muito grande
-    let compactMessage = `⚽ *LIGA RECORD* ⚽\n\n`;
-    compactMessage += `💸 *PAGAMENTOS:*\n`;
-    devedores.forEach(p => {
-      compactMessage += `${p.playerName}: -€${p.totalOwed.toFixed(2)}\n`;
-    });
-    compactMessage += `\n💰 *RECEBEM:*\n`;
-    credores.forEach(p => {
-      const amount = p.netBalance || p.currentBalance || 0;
-      compactMessage += `${p.playerName}: +€${amount.toFixed(2)}\n`;
-    });
-    compactMessage += `\n*TOTAL: €${(selectedReport.totals?.totalToCollect || 0).toFixed(2)}*`;
-    
-    window.open(`https://wa.me/?text=${encodeURIComponent(compactMessage)}`, '_blank');
-    
-  } else {
-    // Enviar mensagem normal
-    window.open(whatsappUrl, '_blank');
-  }
-  
-  // Backup: copiar para clipboard
-  navigator.clipboard.writeText(message).catch(() => {
-    console.log('Não foi possível copiar para clipboard');
-  });
-};
+  }, [selectedReport]);
 
   const exportToPDF = () => {
     if (!selectedReport) {

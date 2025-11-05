@@ -108,18 +108,43 @@ export const firestoreService = {
       console.log('🔍 Getting players for user:', userId);
       
       const snapshot = await getDocs(collection(db, 'players'));
-      let players = snapshot.docs.map(doc => ({
+      const players = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      
-      // Filtrar por userId se existir
-      if (userId) {
-        players = players.filter(p => !p.userId || p.userId === userId);
+
+      if (!userId) {
+        console.log('📊 Total players found (no user filter):', players.length);
+        return players;
       }
-      
-      console.log('📊 Total players found:', players.length);
-      return players;
+
+      const filtered = players.filter(p => !p.userId || p.userId === userId);
+
+      if (filtered.length === 0 && players.length > 0) {
+        console.warn('⚠️ No players matched current user filter, returning full roster');
+        return players;
+      }
+
+      if (filtered.length !== players.length) {
+        console.warn('⚠️ Mixed user ownership detected, returning merged roster');
+        const merged = new Map();
+        players.forEach(player => {
+          if (!merged.has(player.id)) {
+            merged.set(player.id, player);
+          }
+        });
+        filtered.forEach(player => {
+          if (!merged.has(player.id)) {
+            merged.set(player.id, player);
+          }
+        });
+        const mergedPlayers = Array.from(merged.values());
+        console.log('📊 Total players found (merged):', mergedPlayers.length);
+        return mergedPlayers;
+      }
+
+      console.log('📊 Total players found (filtered):', filtered.length);
+      return filtered;
     } catch (error) {
       console.error('❌ Error getting players:', error);
       return [];
@@ -236,25 +261,52 @@ export const firestoreService = {
       console.log('🔍 Getting rounds for user:', userId);
       
       const snapshot = await getDocs(collection(db, 'rounds'));
-      let rounds = snapshot.docs.map(doc => ({
+      const rounds = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      
-      // Filtrar por userId se existir
-      if (userId) {
-        rounds = rounds.filter(r => !r.userId || r.userId === userId);
+
+      const sortRounds = data =>
+        data.sort((a, b) => {
+          const dateA = new Date(a.createdAt || 0);
+          const dateB = new Date(b.createdAt || 0);
+          return dateB - dateA;
+        });
+
+      if (!userId) {
+        const sorted = sortRounds([...rounds]);
+        console.log('📊 Total rounds found (no user filter):', sorted.length);
+        return sorted;
       }
-      
-      // Ordenar por data de criação
-      rounds.sort((a, b) => {
-        const dateA = new Date(a.createdAt || 0);
-        const dateB = new Date(b.createdAt || 0);
-        return dateB - dateA;
-      });
-      
-      console.log('📊 Total rounds found:', rounds.length);
-      return rounds;
+
+      const filtered = rounds.filter(r => !r.userId || r.userId === userId);
+
+      if (filtered.length === 0 && rounds.length > 0) {
+        console.warn('⚠️ No rounds matched current user filter, returning full history');
+        return sortRounds([...rounds]);
+      }
+
+      if (filtered.length !== rounds.length) {
+        console.warn('⚠️ Mixed round ownership detected, returning merged history');
+        const merged = new Map();
+        rounds.forEach(round => {
+          if (!merged.has(round.id)) {
+            merged.set(round.id, round);
+          }
+        });
+        filtered.forEach(round => {
+          if (!merged.has(round.id)) {
+            merged.set(round.id, round);
+          }
+        });
+        const mergedRounds = sortRounds(Array.from(merged.values()));
+        console.log('📊 Total rounds found (merged):', mergedRounds.length);
+        return mergedRounds;
+      }
+
+      const sortedFiltered = sortRounds([...filtered]);
+      console.log('📊 Total rounds found (filtered):', sortedFiltered.length);
+      return sortedFiltered;
     } catch (error) {
       console.error('❌ Error getting rounds:', error);
       return [];
@@ -355,25 +407,52 @@ export const firestoreService = {
       console.log('🔍 Getting transactions for user:', userId);
       
       const snapshot = await getDocs(collection(db, 'transactions'));
-      let transactions = snapshot.docs.map(doc => ({
+      const transactions = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      
-      // Filtrar por userId se existir
-      if (userId) {
-        transactions = transactions.filter(t => !t.userId || t.userId === userId);
+
+      const sortTransactions = data =>
+        data.sort((a, b) => {
+          const dateA = new Date(a.date || a.createdAt || 0);
+          const dateB = new Date(b.date || b.createdAt || 0);
+          return dateB - dateA;
+        });
+
+      if (!userId) {
+        const sorted = sortTransactions([...transactions]);
+        console.log('📊 Total transactions found (no user filter):', sorted.length);
+        return sorted;
       }
-      
-      // Ordenar por data
-      transactions.sort((a, b) => {
-        const dateA = new Date(a.date || a.createdAt || 0);
-        const dateB = new Date(b.date || b.createdAt || 0);
-        return dateB - dateA;
-      });
-      
-      console.log('📊 Total transactions found:', transactions.length);
-      return transactions;
+
+      const filtered = transactions.filter(t => !t.userId || t.userId === userId);
+
+      if (filtered.length === 0 && transactions.length > 0) {
+        console.warn('⚠️ No transactions matched current user filter, returning full ledger');
+        return sortTransactions([...transactions]);
+      }
+
+      if (filtered.length !== transactions.length) {
+        console.warn('⚠️ Mixed transaction ownership detected, returning merged ledger');
+        const merged = new Map();
+        transactions.forEach(transaction => {
+          if (!merged.has(transaction.id)) {
+            merged.set(transaction.id, transaction);
+          }
+        });
+        filtered.forEach(transaction => {
+          if (!merged.has(transaction.id)) {
+            merged.set(transaction.id, transaction);
+          }
+        });
+        const mergedTransactions = sortTransactions(Array.from(merged.values()));
+        console.log('📊 Total transactions found (merged):', mergedTransactions.length);
+        return mergedTransactions;
+      }
+
+      const sortedFiltered = sortTransactions([...filtered]);
+      console.log('📊 Total transactions found (filtered):', sortedFiltered.length);
+      return sortedFiltered;
     } catch (error) {
       console.error('❌ Error getting transactions:', error);
       return [];
@@ -735,17 +814,43 @@ export const firestoreService = {
 
       const snapshot = await getDocs(reportsQuery);
 
-      let reports = snapshot.docs.map(doc => ({
+      const reports = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
 
-      if (userId) {
-        reports = reports.filter(report => !report.userId || report.userId === userId);
+      if (!userId) {
+        console.log('📊 Financial reports found (no user filter):', reports.length);
+        return reports;
       }
 
-      console.log('📊 Financial reports found:', reports.length);
-      return reports;
+      const filtered = reports.filter(report => !report.userId || report.userId === userId);
+
+      if (filtered.length === 0 && reports.length > 0) {
+        console.warn('⚠️ No reports matched current user filter, returning full archive');
+        return reports;
+      }
+
+      if (filtered.length !== reports.length) {
+        console.warn('⚠️ Mixed report ownership detected, returning merged archive');
+        const merged = new Map();
+        reports.forEach(report => {
+          if (!merged.has(report.id)) {
+            merged.set(report.id, report);
+          }
+        });
+        filtered.forEach(report => {
+          if (!merged.has(report.id)) {
+            merged.set(report.id, report);
+          }
+        });
+        const mergedReports = Array.from(merged.values());
+        console.log('📊 Financial reports found (merged):', mergedReports.length);
+        return mergedReports;
+      }
+
+      console.log('📊 Financial reports found (filtered):', filtered.length);
+      return filtered;
     } catch (error) {
       console.error('❌ Error getting financial reports:', error);
       return [];
