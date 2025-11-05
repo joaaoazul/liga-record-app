@@ -227,68 +227,86 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
         return false;
       }
       
+      const normalizeId = (value) => {
+        if (value === undefined || value === null) return null;
+        const normalized = String(value).trim();
+        return normalized.length ? normalized : null;
+      };
+
+      const normalizeNameKey = (name) => (name || '').trim().toLowerCase() || null;
+
+      const getPaymentForPosition = (position) => {
+        if (!Array.isArray(round.paymentStructure)) return 0;
+        if (!Number.isFinite(position) || position < 1) return 0;
+        const amount = round.paymentStructure[position - 1];
+        return Number.isFinite(amount) ? amount : 0;
+      };
+
       // Os resultados já vêm ordenados e com posições do modal
-      const finalParticipants = results.map((participant, index) => ({
+      const submittedResults = results.map((participant, index) => ({
         ...participant,
-        position: participant.position || index + 1,
-        weeklyPayment: round.paymentStructure?.[index] || 0
+        position: participant.position || index + 1
       }));
 
-      // Garantir que todos os participantes originais da ronda recebem um registo
       const originalParticipants = Array.isArray(round.participants)
         ? round.participants
         : [];
 
-      const missingParticipants = originalParticipants.filter((participant) =>
-        participant?.playerId &&
-        !finalParticipants.some((finalParticipant) => finalParticipant.playerId === participant.playerId)
-      );
+      const combinedParticipants = [...submittedResults];
 
-      if (missingParticipants.length > 0) {
+      const missingOriginalParticipants = originalParticipants.filter((participant) => {
+        const participantId = normalizeId(participant?.playerId ?? participant?.id);
+        return (
+          participantId &&
+          !combinedParticipants.some((finalParticipant) => normalizeId(finalParticipant.playerId ?? finalParticipant.id) === participantId)
+        );
+      });
+
+      if (missingOriginalParticipants.length > 0) {
         console.warn(
-          `⚠️ Foram encontrados ${missingParticipants.length} participantes sem resultados explícitos. Atribuindo valores padrão.`
+          `⚠️ Foram encontrados ${missingOriginalParticipants.length} participantes originais sem resultados explícitos. Atribuindo valores padrão.`
         );
 
-        missingParticipants.forEach((participant) => {
-          finalParticipants.push({
+        missingOriginalParticipants.forEach((participant) => {
+          combinedParticipants.push({
             ...participant,
-            points: participant.points ?? 0,
-            position: participant.position || null,
-            weeklyPayment: 0
+            points: Number.isFinite(participant.points) ? participant.points : 0,
+            position: Number.isFinite(participant.position) ? participant.position : null
           });
         });
       }
-      
-      // Atualizar ronda no Firebase PRIMEIRO
-      console.log('📝 Atualizando status da ronda...');
-      const updateResult = await firestoreService.updateRound(roundId, {
-        status: 'completed',
-        participants: finalParticipants,
-        completedAt: new Date().toISOString(),
-        completedBy: user?.uid || 'anonymous'
-      });
-      
-      if (!updateResult.success) {
-        throw new Error('Falha ao atualizar ronda');
-      }
-      
+
       // Obter versão mais recente dos jogadores diretamente do Firestore para evitar dados desatualizados
       const freshPlayers = await firestoreService.getPlayers();
       const playersMap = new Map();
+      const playersByName = new Map();
 
-      safePlayers.forEach(player => {
-        if (player?.id) {
-          playersMap.set(player.id, player);
+      const registerPlayer = (player) => {
+        if (!player) return;
+
+        const normalizedId = normalizeId(player.id);
+        const nameKey = normalizeNameKey(player.name);
+
+        const existing = normalizedId ? playersMap.get(normalizedId) : null;
+        const mergedPlayer = existing ? { ...existing, ...player, id: normalizedId || player.id } : { ...player, id: normalizedId || player.id };
+
+        if (normalizedId) {
+          playersMap.set(normalizedId, mergedPlayer);
         }
-      });
+
+        if (nameKey) {
+          const existingIds = playersByName.get(nameKey) || new Set();
+          if (normalizedId) {
+            existingIds.add(normalizedId);
+          }
+          playersByName.set(nameKey, existingIds);
+        }
+      };
+
+      safePlayers.forEach(registerPlayer);
 
       if (Array.isArray(freshPlayers)) {
-        freshPlayers.forEach(player => {
-          if (player?.id) {
-            const existing = playersMap.get(player.id) || {};
-            playersMap.set(player.id, { ...existing, ...player });
-          }
-        });
+        freshPlayers.forEach(registerPlayer);
       }
 
       const playersToProcess = Array.from(playersMap.values());
@@ -297,19 +315,169 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
         throw new Error('Nenhum jogador encontrado para atualizar');
       }
 
+      const participantResultsById = new Map();
+      const participantResultsByName = new Map();
+      const participantsMissingId = [];
+
+      combinedParticipants.forEach((participant) => {
+        const normalizedId = normalizeId(participant.playerId ?? participant.id);
+        const nameKey = normalizeNameKey(participant.playerName ?? participant.name);
+        const playerFromMap = normalizedId ? playersMap.get(normalizedId) : null;
+
+        const normalizedParticipant = {
+          ...participant,
+          playerId: normalizedId,
+          playerName: participant.playerName || participant.name || playerFromMap?.name || 'Jogador',
+          points: Number.isFinite(participant.points) ? participant.points : 0,
+          position: Number.isFinite(participant.position) ? participant.position : null,
+          weeklyPayment: 0
+        };
+
+        if (normalizedParticipant.position) {
+          normalizedParticipant.weeklyPayment = getPaymentForPosition(normalizedParticipant.position);
+        }
+
+        if (normalizedId) {
+          const existing = participantResultsById.get(normalizedId);
+          if (!existing || (normalizedParticipant.position ?? Number.POSITIVE_INFINITY) < (existing.position ?? Number.POSITIVE_INFINITY)) {
+            participantResultsById.set(normalizedId, normalizedParticipant);
+          }
+        } else {
+          participantsMissingId.push({ participant: normalizedParticipant, nameKey });
+        }
+
+        if (nameKey && !participantResultsByName.has(nameKey)) {
+          participantResultsByName.set(nameKey, normalizedParticipant);
+        }
+      });
+
+      if (participantsMissingId.length > 0) {
+        participantsMissingId.forEach(({ participant: missingParticipant, nameKey }) => {
+          if (!missingParticipant.playerId && nameKey && playersByName.has(nameKey) && playersByName.get(nameKey).size === 1) {
+            const [inferredId] = Array.from(playersByName.get(nameKey));
+            if (inferredId) {
+              missingParticipant.playerId = inferredId;
+              const playerFromMap = playersMap.get(inferredId);
+              if (playerFromMap?.name && !missingParticipant.playerName) {
+                missingParticipant.playerName = playerFromMap.name;
+              }
+              participantResultsById.set(inferredId, missingParticipant);
+            }
+          }
+        });
+      }
+
+      const playersNeedingBackfill = [];
+
+      playersToProcess.forEach((player) => {
+        const normalizedPlayerId = normalizeId(player.id);
+        const playerNameKey = normalizeNameKey(player.name);
+
+        if (!normalizedPlayerId) {
+          console.warn('⚠️ Jogador sem ID válido encontrado:', player);
+          return;
+        }
+
+        if (!participantResultsById.has(normalizedPlayerId)) {
+          let matchedParticipant = null;
+
+          if (playerNameKey && participantResultsByName.has(playerNameKey)) {
+            matchedParticipant = participantResultsByName.get(playerNameKey);
+          }
+
+          if (matchedParticipant && !matchedParticipant.playerId) {
+            matchedParticipant.playerId = normalizedPlayerId;
+            participantResultsById.set(normalizedPlayerId, matchedParticipant);
+          } else {
+            const fallbackParticipant = {
+              playerId: normalizedPlayerId,
+              playerName: player.name,
+              points: 0,
+              position: null,
+              weeklyPayment: 0,
+              autoBackfilled: true
+            };
+
+            participantResultsById.set(normalizedPlayerId, fallbackParticipant);
+            if (playerNameKey && !participantResultsByName.has(playerNameKey)) {
+              participantResultsByName.set(playerNameKey, fallbackParticipant);
+            }
+            playersNeedingBackfill.push(player.name || normalizedPlayerId);
+          }
+        }
+      });
+
+      if (playersNeedingBackfill.length > 0) {
+        console.warn(
+          `⚠️ Foram adicionados resultados padrão para ${playersNeedingBackfill.length} jogadores sem entrada explícita:`,
+          playersNeedingBackfill
+        );
+      }
+
+      const unresolvedParticipants = participantsMissingId
+        .map(({ participant }) => participant)
+        .filter(participant => !participant.playerId);
+
+      if (unresolvedParticipants.length > 0) {
+        console.warn(
+          '⚠️ Participantes sem identificação associada foram mantidos apenas no histórico da ronda:',
+          unresolvedParticipants.map(participant => participant.playerName || participant.name || 'Sem nome')
+        );
+      }
+
+      const finalParticipants = [
+        ...Array.from(participantResultsById.values()).map((participant) => {
+          const normalizedPlayerId = normalizeId(participant.playerId);
+          return {
+            ...participant,
+            playerId: normalizedPlayerId,
+            weeklyPayment: participant.position ? getPaymentForPosition(participant.position) : 0
+          };
+        }),
+        ...unresolvedParticipants.map((participant) => ({
+          ...participant,
+          weeklyPayment: participant.position ? getPaymentForPosition(participant.position) : 0
+        }))
+      ].sort((a, b) => {
+        if (a.position === null && b.position === null) {
+          return (a.playerName || '').localeCompare(b.playerName || '');
+        }
+        if (a.position === null) return 1;
+        if (b.position === null) return -1;
+        return a.position - b.position;
+      });
+
+      // Atualizar ronda no Firebase PRIMEIRO
+      console.log('📝 Atualizando status da ronda...');
+      const updateResult = await firestoreService.updateRound(roundId, {
+        status: 'completed',
+        participants: finalParticipants,
+        completedAt: new Date().toISOString(),
+        completedBy: user?.uid || 'anonymous'
+      });
+
+      if (!updateResult.success) {
+        throw new Error('Falha ao atualizar ronda');
+      }
+
       // Processar atualizações dos jogadores
       console.log('👥 Atualizando jogadores...');
       const updatedPlayers = [];
       const autoPaymentCandidates = [];
 
       for (const player of playersToProcess) {
-        const result = finalParticipants.find(p => p.playerId === player.id);
+        const normalizedPlayerId = normalizeId(player.id);
+        const result = finalParticipants.find(p => normalizeId(p.playerId) === normalizedPlayerId);
 
         if (result) {
           // Verificar duplicação
-          const playerRounds = player.rounds || [];
+          const playerRounds = Array.isArray(player.rounds)
+            ? player.rounds
+            : player.rounds && typeof player.rounds === 'object'
+              ? Object.values(player.rounds)
+              : [];
           const roundExists = playerRounds.some(r => r.roundId === roundId);
-          
+
           if (roundExists) {
             console.warn(`⚠️ Ronda ${roundId} já processada para ${player.name}`);
             updatedPlayers.push(player);
@@ -329,9 +497,9 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
             date: new Date().toISOString(),
             autoPaid: false
           };
-          
+
           const updatedRounds = [...playerRounds, newRoundEntry];
-          
+
           // Verificar pagamento automático (a cada 5 rondas)
           const unpaidRounds = updatedRounds.filter(r => !r.autoPaid && r.payment > 0);
 
@@ -345,7 +513,12 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
           };
 
           // Salvar no Firebase
-          await firestoreService.savePlayer(updatedPlayer);
+          const saveResult = await firestoreService.savePlayer(updatedPlayer);
+
+          if (!saveResult?.success) {
+            throw new Error(`Falha ao guardar jogador ${player.name || normalizedPlayerId}`);
+          }
+
           updatedPlayers.push(updatedPlayer);
 
           if (unpaidRounds.length >= 5) {
@@ -381,6 +554,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
             });
           }
         } else {
+          console.warn('⚠️ Nenhum resultado encontrado para jogador mesmo após normalização:', player);
           updatedPlayers.push(player);
         }
       }
@@ -1093,10 +1267,33 @@ const CreateRoundModal = ({
 
 // Modal para finalizar ronda - COM SISTEMA DE DESEMPATE
 const FinishRoundModal = ({ round, onClose, onSubmit, loading }) => {
-  const [results, setResults] = useState(
-    round.participants.map(p => ({
-      ...p,
-      points: 0,
+  const normalizeParticipantId = (participant, fallbackIndex) => {
+    const possibleId =
+      participant?.playerId ??
+      participant?.id ??
+      participant?.uid ??
+      participant?.firebaseId ??
+      participant?.userId ??
+      null;
+
+    if (possibleId === undefined || possibleId === null || possibleId === '') {
+      return `temp-${fallbackIndex}`;
+    }
+
+    return String(possibleId);
+  };
+
+  const normalizeParticipantName = (participant) =>
+    participant?.playerName || participant?.name || participant?.displayName || '';
+
+  const safeParticipants = Array.isArray(round.participants) ? round.participants : [];
+
+  const [results, setResults] = useState(() =>
+    safeParticipants.map((participant, index) => ({
+      ...participant,
+      playerId: normalizeParticipantId(participant, index),
+      playerName: normalizeParticipantName(participant),
+      points: Number.isFinite(participant.points) ? participant.points : 0,
       tiebreakOrder: 0 // Para ordenação manual em empates
     }))
   );
@@ -1105,7 +1302,7 @@ const FinishRoundModal = ({ round, onClose, onSubmit, loading }) => {
     setResults(prevResults =>
       prevResults.map(r => {
         if (r.playerId === playerId) {
-          return { ...r, points: parseInt(points) || 0, tiebreakOrder: 0 };
+          return { ...r, points: parseInt(points, 10) || 0, tiebreakOrder: 0 };
         }
         // Reset tiebreak order quando pontos mudam
         return { ...r, tiebreakOrder: 0 };
