@@ -20,8 +20,7 @@ import {
   query,
   where,
   orderBy,
-  limit,
-  serverTimestamp 
+  limit
 } from 'firebase/firestore';
 
 // =====================================
@@ -558,7 +557,7 @@ export const firestoreService = {
   async chargeWeeklyFees(amount) {
     try {
       console.log('💰 Charging weekly fees:', amount);
-      
+
       const players = await this.getPlayers();
       
       for (const player of players) {
@@ -586,10 +585,72 @@ export const firestoreService = {
     }
   },
 
+  async addDebt(playerId, amount, note = 'Taxa/Multa adicionada') {
+    try {
+      const numericAmount = Number(amount);
+      if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+        throw new Error('Valor inválido');
+      }
+
+      const player = await this.getPlayerById(playerId);
+      if (!player) {
+        throw new Error('Player not found');
+      }
+
+      const newBalance = Number(player.balance || 0) - numericAmount;
+
+      await this.updatePlayer(playerId, { balance: newBalance });
+      await this.addTransaction({
+        playerId,
+        playerName: player.name,
+        type: 'debt',
+        amount: numericAmount,
+        note,
+        balanceAfter: newBalance,
+      });
+
+      return { success: true, newBalance };
+    } catch (error) {
+      console.error('❌ Error adding debt:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async payDebt(playerId, amount, note = 'Pagamento de dívida') {
+    try {
+      const numericAmount = Number(amount);
+      if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+        throw new Error('Valor inválido');
+      }
+
+      const player = await this.getPlayerById(playerId);
+      if (!player) {
+        throw new Error('Player not found');
+      }
+
+      const newBalance = Number(player.balance || 0) + numericAmount;
+
+      await this.updatePlayer(playerId, { balance: newBalance });
+      await this.addTransaction({
+        playerId,
+        playerName: player.name,
+        type: 'payment',
+        amount: numericAmount,
+        note,
+        balanceAfter: newBalance,
+      });
+
+      return { success: true, newBalance };
+    } catch (error) {
+      console.error('❌ Error paying debt:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
   async settleAllDebts() {
     try {
       console.log('💳 Settling all debts');
-      
+
       const players = await this.getPlayers();
       
       for (const player of players) {
@@ -641,6 +702,37 @@ export const firestoreService = {
       return { success: true, newBalance };
     } catch (error) {
       console.error('❌ Error settling debt:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async resetAllBalances() {
+    try {
+      console.log('🔄 Resetting all balances to zero');
+
+      const players = await this.getPlayers();
+
+      await Promise.all(players.map(async (player) => {
+        const currentBalance = Number(player.balance || 0);
+
+        if (currentBalance !== 0) {
+          await this.updatePlayer(player.id, { balance: 0 });
+
+          await this.addTransaction({
+            playerId: player.id,
+            playerName: player.name,
+            type: currentBalance < 0 ? 'payment' : 'debt',
+            amount: Math.abs(currentBalance),
+            note: 'Reset de saldo',
+            balanceAfter: 0,
+          });
+        }
+      }));
+
+      console.log('✅ All balances reset successfully');
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Error resetting balances:', error);
       return { success: false, error: error.message };
     }
   },
@@ -884,9 +976,11 @@ export const firestoreService = {
 };
 
 // Export tudo como default também para compatibilidade
-export default {
+const firebaseModule = {
   auth,
   db,
   authService,
   firestoreService
 };
+
+export default firebaseModule;

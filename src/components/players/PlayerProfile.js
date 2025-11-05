@@ -1,12 +1,10 @@
 // src/components/players/PlayerProfile.js - VERSÃO ATUALIZADA
 import React, { useState } from 'react';
-import { 
-  X, 
-  Euro, 
-  TrendingUp, 
+import {
+  X,
+  Euro,
+  TrendingUp,
   TrendingDown,
-  Calendar,
-  CreditCard,
   CheckCircle,
   AlertCircle,
   Plus,
@@ -15,7 +13,7 @@ import {
   Trash2,
   Edit
 } from 'lucide-react';
-import { firestoreService } from '../../services/firebase';
+import { useLeagueData } from '../../hooks/useLeagueData';
 
 const PlayerProfile = ({ player, transactions = [], onClose, onUpdate }) => {
   const [activeTab, setActiveTab] = useState('overview');
@@ -26,6 +24,7 @@ const PlayerProfile = ({ player, transactions = [], onClose, onUpdate }) => {
   const [processing, setProcessing] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState(player.name);
+  const { actions } = useLeagueData();
 
   // Calcular estatísticas
   const playerTransactions = transactions.filter(t => t.playerId === player.id);
@@ -50,7 +49,7 @@ const PlayerProfile = ({ player, transactions = [], onClose, onUpdate }) => {
 
     setProcessing(true);
     try {
-      const result = await firestoreService.addDebt(
+      const result = await actions.addDebt(
         player.id,
         parseFloat(amount),
         description || 'Taxa/Multa adicionada'
@@ -89,7 +88,7 @@ const PlayerProfile = ({ player, transactions = [], onClose, onUpdate }) => {
 
     setProcessing(true);
     try {
-      const result = await firestoreService.payDebt(
+      const result = await actions.payDebt(
         player.id,
         parseFloat(amount),
         description || 'Pagamento de dívida'
@@ -134,8 +133,9 @@ const PlayerProfile = ({ player, transactions = [], onClose, onUpdate }) => {
 
     setProcessing(true);
     try {
-      const result = await firestoreService.settleDebt(
+      const result = await actions.settleDebt(
         player.id,
+        Math.abs(currentBalance),
         'Quitação completa da dívida'
       );
 
@@ -180,7 +180,7 @@ const PlayerProfile = ({ player, transactions = [], onClose, onUpdate }) => {
 
     setProcessing(true);
     try {
-      const result = await firestoreService.updatePlayer(player.id, {
+      const result = await actions.updatePlayer(player.id, {
         name: newName.trim()
       });
 
@@ -208,12 +208,14 @@ const PlayerProfile = ({ player, transactions = [], onClose, onUpdate }) => {
 
     setProcessing(true);
     try {
-      const result = await firestoreService.deletePlayer(player.id);
+      const result = await actions.deletePlayer(player.id);
 
       if (result.success) {
         alert('✅ Jogador eliminado');
+        if (onUpdate) {
+          await onUpdate();
+        }
         onClose();
-        window.location.reload();
       } else {
         alert(`❌ Erro: ${result.error}`);
       }

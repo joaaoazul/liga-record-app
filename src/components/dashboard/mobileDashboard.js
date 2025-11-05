@@ -1,8 +1,8 @@
-// src/components/dashboard/PerfectMobileDashboard.js 
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Trophy, 
-  Users, 
+// src/components/dashboard/PerfectMobileDashboard.js
+import React, { useMemo, useState } from 'react';
+import {
+  Trophy,
+  Users,
   Euro,
   Plus,
   Settings,
@@ -11,33 +11,21 @@ import {
   ChevronDown,
   User,
   X,
-  Check,
   AlertCircle,
   FileText,
   RefreshCw,
   LogOut,
-  Menu,
-  Calendar,
-  DollarSign,
-  Target,
   Award,
   CreditCard,
-  TrendingUp,
-  TrendingDown,
-  Clock,
   UtensilsCrossed,
   Trash2,
-  Edit,
   MoreVertical,
-  ChevronRight,
-  Home,
-  PieChart,
   Wallet,
   Receipt,
-  Bell
+  Bell,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
-import { firestoreService } from '../../services/firebase';
+import { useLeagueData } from '../../hooks/useLeagueData';
 import PlayerProfile from '../players/PlayerProfile';
 import RoundsManager from '../rounds/RoundsManager';
 import FinancialReport from '../financial/FinancialReport';
@@ -55,16 +43,18 @@ const safeToFixed = (value, decimals = 2, defaultValue = 0) => {
 };
 
 const PerfectMobileDashboard = () => {
-  const [players, setPlayers] = useState([]);
-  const [transactions, setTransactions] = useState([]);
-  const [rounds, setRounds] = useState([]);
-  const [settings, setSettings] = useState({
-    entryFee: 10,
-    weeklyPayment: 5,
-    dinnerPotGoal: 200,
-    distributionPercentages: [40, 30, 20, 10]
-  });
-  const [loading, setLoading] = useState(true);
+  const {
+    players,
+    transactions,
+    rounds,
+    settings,
+    loading,
+    refreshing,
+    error,
+    reload,
+    refresh,
+    actions,
+  } = useLeagueData();
   const [currentTab, setCurrentTab] = useState('Dashboard');
   const [viewingProfile, setViewingProfile] = useState(null);
   const [showAddPlayer, setShowAddPlayer] = useState(false);
@@ -73,43 +63,12 @@ const PerfectMobileDashboard = () => {
   const [filterStatus, setFilterStatus] = useState('Todos');
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showQuickActions, setShowQuickActions] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [showPlayerActions, setShowPlayerActions] = useState(false);
-  
+
   const { user, signOut } = useAuth();
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      
-      const [playersData, transactionsData, settingsData, roundsData] = await Promise.all([
-        firestoreService.getPlayers().catch(() => []),
-        firestoreService.getTransactions().catch(() => []),
-        firestoreService.getSettings().catch(() => null),
-        firestoreService.getRounds().catch(() => [])
-      ]);
-
-      setPlayers(playersData || []);
-      setTransactions(transactionsData || []);
-      setRounds(roundsData || []);
-      if (settingsData) setSettings(settingsData);
-      
-    } catch (error) {
-      console.error('Error loading data:', error);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
-
   const handleRefresh = async () => {
-    setRefreshing(true);
-    await loadData();
+    await refresh();
   };
 
   const addPlayer = async () => {
@@ -117,10 +76,18 @@ const PerfectMobileDashboard = () => {
       alert('Nome não pode estar vazio!');
       return;
     }
-    
+
     try {
-      await firestoreService.addPlayer(newPlayerName.trim());
-      await loadData();
+      const newPlayer = {
+        name: newPlayerName.trim(),
+        createdAt: new Date().toISOString(),
+        paid: false,
+        balance: 0,
+        totalPoints: 0,
+      };
+
+      await actions.savePlayer(newPlayer);
+      await refresh();
       setNewPlayerName('');
       setShowAddPlayer(false);
     } catch (error) {
@@ -132,12 +99,12 @@ const PerfectMobileDashboard = () => {
     try {
       const player = players.find(p => p.id === playerId);
       if (!player) return;
-      
-      await firestoreService.updatePlayer(playerId, {
-        paid: !player.paid
+
+      await actions.updatePlayer(playerId, {
+        paid: !player.paid,
       });
-      
-      await loadData();
+
+      await refresh();
     } catch (error) {
       console.error('Error toggling paid status:', error);
     }
@@ -146,8 +113,8 @@ const PerfectMobileDashboard = () => {
   const handleDeletePlayer = async (playerId) => {
     const player = players.find(p => p.id === playerId);
     if (window.confirm(`Eliminar ${player?.name}?`)) {
-      await firestoreService.deletePlayer(playerId);
-      await loadData();
+      await actions.deletePlayer(playerId);
+      await refresh();
       setShowPlayerActions(false);
       setSelectedPlayer(null);
     }
@@ -155,33 +122,44 @@ const PerfectMobileDashboard = () => {
 
   const handleChargeWeeklyFee = async () => {
     if (window.confirm(`Cobrar taxa semanal de ${settings.weeklyPayment}€ a todos?`)) {
-      await firestoreService.chargeWeeklyFees(settings.weeklyPayment);
-      await loadData();
+      await actions.chargeWeeklyFees(settings.weeklyPayment);
+      await refresh();
     }
   };
 
   const handleSettleDebts = async () => {
     if (window.confirm('Quitar todas as dívidas?')) {
-      await firestoreService.settleAllDebts();
-      await loadData();
+      await actions.settleAllDebts();
+      await refresh();
     }
   };
 
   // Calculate stats - CORRIGIDO COM VALIDAÇÕES
-  const stats = {
-    totalPlayers: players.length,
-    paidPlayers: players.filter(p => p.paid).length,
-    unpaidPlayers: players.filter(p => !p.paid).length,
-    // CORREÇÃO: Garantir que todos os valores sejam números válidos
-    totalBalance: safeNumber(players.reduce((sum, p) => sum + safeNumber(p.balance), 0)),
-    totalCredit: safeNumber(players.reduce((sum, p) => sum + Math.max(0, safeNumber(p.balance)), 0)),
-    totalDebt: Math.abs(safeNumber(players.reduce((sum, p) => sum + Math.min(0, safeNumber(p.balance)), 0))),
-    dinnerPot: Math.abs(safeNumber(players.reduce((sum, p) => sum + safeNumber(p.balance), 0))),
-    totalPoints: safeNumber(players.reduce((sum, p) => sum + safeNumber(p.totalPoints), 0)),
-    averagePoints: players.length > 0 ? 
-      safeToFixed(safeNumber(players.reduce((sum, p) => sum + safeNumber(p.totalPoints), 0)) / players.length, 1) : '0.0',
-    totalRounds: rounds.length
-  };
+  const stats = useMemo(() => {
+    const totalPlayers = players.length;
+    const paidPlayers = players.filter((p) => p.paid).length;
+    const totalBalance = safeNumber(players.reduce((sum, p) => sum + safeNumber(p.balance), 0));
+    const totalCredit = safeNumber(
+      players.reduce((sum, p) => sum + Math.max(0, safeNumber(p.balance)), 0),
+    );
+    const totalDebt = Math.abs(
+      safeNumber(players.reduce((sum, p) => sum + Math.min(0, safeNumber(p.balance)), 0)),
+    );
+    const totalPoints = safeNumber(players.reduce((sum, p) => sum + safeNumber(p.totalPoints), 0));
+
+    return {
+      totalPlayers,
+      paidPlayers,
+      unpaidPlayers: totalPlayers - paidPlayers,
+      totalBalance,
+      totalCredit,
+      totalDebt,
+      dinnerPot: Math.abs(totalBalance),
+      totalPoints,
+      averagePoints: totalPlayers > 0 ? safeToFixed(totalPoints / totalPlayers, 1) : '0.0',
+      totalRounds: rounds.length,
+    };
+  }, [players, rounds]);
 
   // Get pot status
   const getPotStatus = () => {
@@ -436,9 +414,26 @@ const PerfectMobileDashboard = () => {
             </button>
           ))}
         </div>
-        
+
         <SettingsMenu />
       </div>
+
+      {error && (
+        <div className="px-4 py-3">
+          <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <AlertCircle className="h-5 w-5" />
+              <span>{error}</span>
+            </div>
+            <button
+              onClick={() => reload()}
+              className="text-sm font-medium hover:underline"
+            >
+              Tentar novamente
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Dashboard Tab */}
       {currentTab === 'Dashboard' && (
@@ -679,8 +674,7 @@ const PerfectMobileDashboard = () => {
         <div className="px-4 py-4">
           <RoundsManager
             players={players}
-            rounds={rounds}
-            onReload={loadData}
+            onReload={() => refresh()}
             settings={settings}
           />
         </div>
@@ -690,9 +684,6 @@ const PerfectMobileDashboard = () => {
       {currentTab === 'Finanças' && (
         <div className="px-4 py-4">
           <FinancialReport
-            players={players}
-            transactions={transactions}
-            settings={settings}
             onBack={() => setCurrentTab('Dashboard')}
           />
         </div>
@@ -814,7 +805,7 @@ const PerfectMobileDashboard = () => {
           transactions={transactions.filter(t => t.playerId === viewingProfile.id)}
           onClose={() => setViewingProfile(null)}
           onUpdate={async () => {
-            await loadData();
+            await refresh();
             setViewingProfile(null);
           }}
         />

@@ -1,16 +1,15 @@
 // src/components/settings/Settings.js
 import React, { useState, useEffect } from 'react';
-import { 
-  Settings as SettingsIcon, 
-  Save, 
-  Euro, 
-  Target, 
-  Percent,
+import {
+  Settings as SettingsIcon,
+  Save,
+  Euro,
+  Target,
   AlertCircle,
   Check,
   X
 } from 'lucide-react';
-import { firestoreService } from '../../services/firebase';
+import { useLeagueData } from '../../hooks/useLeagueData';
 
 const Settings = ({ onClose, onUpdate }) => {
   const [settings, setSettings] = useState({
@@ -22,26 +21,17 @@ const Settings = ({ onClose, onUpdate }) => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const { settings: savedSettings, actions } = useLeagueData();
 
   // Carregar configurações ao montar
   useEffect(() => {
-    loadSettings();
-  }, []);
-
-  const loadSettings = async () => {
-    setLoading(true);
-    try {
-      const currentSettings = await firestoreService.getSettings();
-      if (currentSettings) {
-        setSettings(currentSettings);
-      }
-    } catch (error) {
-      console.error('Erro ao carregar configurações:', error);
-      setMessage('Erro ao carregar configurações');
-    } finally {
+    if (savedSettings) {
+      setSettings(savedSettings);
       setLoading(false);
+    } else {
+      setLoading(true);
     }
-  };
+  }, [savedSettings]);
 
   const handleSave = async () => {
     // Validações
@@ -68,7 +58,7 @@ const Settings = ({ onClose, onUpdate }) => {
 
     setSaving(true);
     try {
-      const result = await firestoreService.updateSettings(settings);
+      const result = await actions.updateSettings(settings);
       
       if (result.success) {
         setMessage('Configurações guardadas com sucesso!');
@@ -91,12 +81,6 @@ const Settings = ({ onClose, onUpdate }) => {
     } finally {
       setSaving(false);
     }
-  };
-
-  const handlePercentageChange = (index, value) => {
-    const newPercentages = [...settings.distributionPercentages];
-    newPercentages[index] = parseFloat(value) || 0;
-    setSettings({ ...settings, distributionPercentages: newPercentages });
   };
 
   if (loading) {

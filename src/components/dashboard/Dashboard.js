@@ -1,17 +1,31 @@
 // src/components/dashboard/FullDesktopDashboard.js 
-import React, { useState, useEffect } from 'react';
-import { 
-  Trophy, Users, Euro, Plus, Settings, Search, Filter,
-  ChevronDown, User, X, Check, AlertCircle, FileText,
-  RefreshCw, LogOut, Menu, Calendar, DollarSign, Target,
-  Award, CreditCard, TrendingUp, TrendingDown, Clock,
-  UtensilsCrossed, Trash2, Edit, MoreVertical, ChevronRight,
-  Home, PieChart, Wallet, Receipt, Bell, Activity, BarChart3,
-  Download, Upload, Database, Shield, Zap, ArrowUpRight,
-  ArrowDownRight, Info, HelpCircle
+import React, { useMemo, useState } from 'react';
+import {
+  Trophy,
+  Users,
+  Euro,
+  Plus,
+  Settings,
+  Search,
+  User,
+  X,
+  Check,
+  AlertCircle,
+  RefreshCw,
+  Menu,
+  ChevronRight,
+  CreditCard,
+  UtensilsCrossed,
+  Trash2,
+  Download,
+  Bell,
+  Home,
+  PieChart,
+  ArrowUpRight,
+  Activity,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
-import { firestoreService } from '../../services/firebase';
+import { useLeagueData } from '../../hooks/useLeagueData';
 import PlayerProfile from '../players/PlayerProfile';
 import RoundsManager from '../rounds/RoundsManager';
 import SettingsPage from '../configs/config';
@@ -30,16 +44,18 @@ const safeToFixed = (value, decimals = 2, defaultValue = 0) => {
 };
 
 const FullDesktopDashboard = () => {
-  const [players, setPlayers] = useState([]);
-  const [transactions, setTransactions] = useState([]);
-  const [rounds, setRounds] = useState([]);
-  const [settings, setSettings] = useState({
-    entryFee: 10,
-    weeklyPayment: 12,
-    dinnerPotGoal: 500,
-    distributionPercentages: [40, 30, 20, 10]
-  });
-  const [loading, setLoading] = useState(true);
+  const {
+    players,
+    rounds,
+    transactions,
+    settings,
+    loading,
+    refreshing,
+    error,
+    reload,
+    refresh,
+    actions,
+  } = useLeagueData();
   const [currentView, setCurrentView] = useState('dashboard');
   const [viewingProfile, setViewingProfile] = useState(null);
   const [showAddPlayer, setShowAddPlayer] = useState(false);
@@ -48,57 +64,47 @@ const FullDesktopDashboard = () => {
   const [filterStatus, setFilterStatus] = useState('Todos');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  
+
   const { user, signOut } = useAuth();
+  // Calculate all stats with memoization to avoid unnecessary work
+  const stats = useMemo(() => {
+    const totalPlayers = players.length;
+    const paidPlayers = players.filter((p) => p.paid).length;
+    const unpaidPlayers = totalPlayers - paidPlayers;
+    const totalBalance = safeNumber(players.reduce((sum, p) => sum + safeNumber(p.balance), 0));
+    const totalCredit = safeNumber(
+      players.reduce((sum, p) => sum + Math.max(0, safeNumber(p.balance)), 0),
+    );
+    const totalDebt = Math.abs(
+      safeNumber(players.reduce((sum, p) => sum + Math.min(0, safeNumber(p.balance)), 0)),
+    );
+    const totalPoints = safeNumber(players.reduce((sum, p) => sum + safeNumber(p.totalPoints), 0));
+    const averagePoints = totalPlayers > 0 ? safeToFixed(totalPoints / totalPlayers, 1) : '0.0';
+    const activePercentage = totalPlayers > 0 ? safeToFixed((paidPlayers / totalPlayers) * 100, 0) : '0';
+    const sortedByPoints = [...players].sort(
+      (a, b) => safeNumber(b.totalPoints) - safeNumber(a.totalPoints),
+    );
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      
-      const [playersData, transactionsData, settingsData, roundsData] = await Promise.all([
-        firestoreService.getPlayers().catch(() => []),
-        firestoreService.getTransactions().catch(() => []),
-        firestoreService.getSettings().catch(() => null),
-        firestoreService.getRounds().catch(() => [])
-      ]);
-
-      setPlayers(playersData || []);
-      setTransactions(transactionsData || []);
-      setRounds(roundsData || []);
-      if (settingsData) setSettings(settingsData);
-      
-    } catch (error) {
-      console.error('Error loading data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Calculate all stats - CORRIGIDO COM VALIDAÇÕES
-  const stats = {
-    totalPlayers: players.length,
-    paidPlayers: players.filter(p => p.paid).length,
-    unpaidPlayers: players.filter(p => !p.paid).length,
-    // CORREÇÃO: Garantir que todos os valores sejam números válidos
-    totalBalance: safeNumber(players.reduce((sum, p) => sum + safeNumber(p.balance), 0)),
-    totalCredit: safeNumber(players.reduce((sum, p) => sum + Math.max(0, safeNumber(p.balance)), 0)),
-    totalDebt: Math.abs(safeNumber(players.reduce((sum, p) => sum + Math.min(0, safeNumber(p.balance)), 0))),
-    dinnerPot: Math.abs(safeNumber(players.reduce((sum, p) => sum + safeNumber(p.balance), 0))),
-    totalPoints: safeNumber(players.reduce((sum, p) => sum + safeNumber(p.totalPoints), 0)),
-    averagePoints: players.length > 0 ? 
-      safeToFixed(safeNumber(players.reduce((sum, p) => sum + safeNumber(p.totalPoints), 0)) / players.length, 1) : '0.0',
-    totalRounds: rounds.length,
-    activePercentage: players.length > 0 ? 
-      safeToFixed((players.filter(p => p.paid).length / players.length) * 100, 0) : '0',
-    lastTransaction: transactions[0]?.date ? new Date(transactions[0].date).toLocaleDateString('pt-PT') : 'N/A',
-    topPlayer: players.sort((a, b) => safeNumber(b.totalPoints) - safeNumber(a.totalPoints))[0]?.name || 'N/A',
-    weeklyGrowth: 12.5, // Mock data
-    monthlyGrowth: 28.3 // Mock data
-  };
+    return {
+      totalPlayers,
+      paidPlayers,
+      unpaidPlayers,
+      totalBalance,
+      totalCredit,
+      totalDebt,
+      dinnerPot: Math.abs(totalBalance),
+      totalPoints,
+      averagePoints,
+      totalRounds: rounds.length,
+      activePercentage,
+      lastTransaction: transactions[0]?.date
+        ? new Date(transactions[0].date).toLocaleDateString('pt-PT')
+        : 'N/A',
+      topPlayer: sortedByPoints[0]?.name || 'N/A',
+      weeklyGrowth: 12.5, // Mock data
+      monthlyGrowth: 28.3, // Mock data
+    };
+  }, [players, rounds, transactions]);
 
   const getPotStatus = () => {
     if (stats.dinnerPot === 0) return { text: 'Vazio', color: 'text-gray-600', bg: 'bg-gray-100' };
@@ -240,11 +246,10 @@ const FullDesktopDashboard = () => {
                 {currentView === 'financial' && 'Gestão Financeira e Relatórios'}
                 {currentView === 'settings' && (
   <div className="p-6">
-    <SettingsPage 
+    <SettingsPage
       onClose={() => setCurrentView('dashboard')}
-      onUpdate={(newSettings) => {
-        setSettings(newSettings);
-        loadData();
+      onUpdate={async () => {
+        await refresh();
       }}
     />
   </div>
@@ -257,11 +262,12 @@ const FullDesktopDashboard = () => {
             
             <div className="flex items-center space-x-3">
               <button
-                onClick={loadData}
-                className="p-2 hover:bg-gray-100 rounded-lg"
+                onClick={() => reload()}
+                className="p-2 hover:bg-gray-100 rounded-lg disabled:opacity-50"
                 title="Atualizar"
+                disabled={refreshing}
               >
-                <RefreshCw className="h-5 w-5 text-gray-600" />
+                <RefreshCw className={`h-5 w-5 text-gray-600 ${refreshing ? 'animate-spin' : ''}`} />
               </button>
               
               <button
@@ -282,6 +288,23 @@ const FullDesktopDashboard = () => {
             </div>
           </div>
         </div>
+
+        {error && (
+          <div className="px-6 py-3">
+            <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <AlertCircle className="h-5 w-5" />
+                <span>{error}</span>
+              </div>
+              <button
+                onClick={() => reload()}
+                className="text-sm font-medium hover:underline"
+              >
+                Tentar novamente
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Dashboard Content */}
         {currentView === 'dashboard' && (
@@ -531,8 +554,8 @@ const FullDesktopDashboard = () => {
                     <button 
                       onClick={async () => {
                         if (window.confirm(`Cobrar taxa semanal de ${settings.weeklyPayment}€ a todos?`)) {
-                          await firestoreService.chargeWeeklyFees(settings.weeklyPayment);
-                          await loadData();
+                          await actions.chargeWeeklyFees(settings.weeklyPayment);
+                          await refresh();
                         }
                       }}
                       className="w-full px-4 py-3 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 flex items-center justify-between group"
@@ -543,8 +566,8 @@ const FullDesktopDashboard = () => {
                     <button 
                       onClick={async () => {
                         if (window.confirm('Quitar todas as dívidas?')) {
-                          await firestoreService.settleAllDebts();
-                          await loadData();
+                          await actions.settleAllDebts();
+                          await refresh();
                         }
                       }}
                       className="w-full px-4 py-3 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 flex items-center justify-between group"
@@ -631,7 +654,7 @@ const FullDesktopDashboard = () => {
                   <h3 className="text-2xl font-bold">Lista Completa de Jogadores</h3>
                   <div className="flex space-x-3">
                     <button
-                      onClick={loadData}
+                      onClick={() => refresh()}
                       className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center space-x-2"
                     >
                       <RefreshCw className="h-4 w-4" />
@@ -675,8 +698,8 @@ const FullDesktopDashboard = () => {
                   <button
                     onClick={async () => {
                       if (window.confirm(`Cobrar taxa semanal de ${settings.weeklyPayment}€ a todos?`)) {
-                        await firestoreService.chargeWeeklyFees(settings.weeklyPayment);
-                        await loadData();
+                        await actions.chargeWeeklyFees(settings.weeklyPayment);
+                        await refresh();
                       }
                     }}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center space-x-2"
@@ -822,8 +845,8 @@ const FullDesktopDashboard = () => {
                               </button>
                               <button
                                 onClick={async () => {
-                                  await firestoreService.updatePlayer(player.id, { paid: !player.paid });
-                                  await loadData();
+                                  await actions.updatePlayer(player.id, { paid: !player.paid });
+                                  await refresh();
                                 }}
                                 className="text-green-600 hover:text-green-700"
                                 title="Alterar Estado"
@@ -833,8 +856,8 @@ const FullDesktopDashboard = () => {
                               <button
                                 onClick={async () => {
                                   if (window.confirm(`Eliminar ${player.name}?`)) {
-                                    await firestoreService.deletePlayer(player.id);
-                                    await loadData();
+                                    await actions.deletePlayer(player.id);
+                                    await refresh();
                                   }
                                 }}
                                 className="text-red-600 hover:text-red-700"
@@ -866,8 +889,7 @@ const FullDesktopDashboard = () => {
           <div className="p-6">
             <RoundsManager
               players={players}
-              rounds={rounds}
-              onReload={loadData}
+              onReload={() => refresh()}
               settings={settings}
             />
           </div>
@@ -876,9 +898,6 @@ const FullDesktopDashboard = () => {
         {currentView === 'financial' && (
           <div className="p-6">
             <FinancialReport
-              players={players}
-              transactions={transactions}
-              settings={settings}
               onBack={() => setCurrentView('dashboard')}
             />
           </div>
@@ -926,10 +945,10 @@ const FullDesktopDashboard = () => {
                       createdAt: new Date().toISOString()
                     };
                     
-                    const result = await firestoreService.savePlayer(newPlayer);
-                    
+                    const result = await actions.savePlayer(newPlayer);
+
                     if (result.success) {
-                      await loadData(); // CRUCIAL!
+                      await refresh(); // CRUCIAL!
                       setNewPlayerName('');
                       setShowAddPlayer(false);
                     }
@@ -951,7 +970,7 @@ const FullDesktopDashboard = () => {
           transactions={transactions.filter(t => t.playerId === viewingProfile.id)}
           onClose={() => setViewingProfile(null)}
           onUpdate={async () => {
-            await loadData();
+            await refresh();
             setViewingProfile(null);
           }}
         />

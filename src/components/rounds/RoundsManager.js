@@ -1,12 +1,11 @@
 // src/components/rounds/RoundsManager.js 
 import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  Calendar, Trophy, Users, Euro, Plus, Edit, Eye, Target, 
-  TrendingDown, Award, CheckCircle, CreditCard, AlertTriangle,
-  RefreshCw, Trash2, Shield, Clock, ChevronUp, ChevronDown
+import {
+  Calendar, Trophy, Users, Plus, Eye, Target,
+  CreditCard, AlertTriangle, RefreshCw, Shield, ChevronUp, ChevronDown
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
-import { firestoreService } from '../../services/firebase';
+import { useLeagueData } from '../../hooks/useLeagueData';
 
 // Helper para calcular semana do ano
 const getWeekNumber = (date = new Date()) => {
@@ -14,94 +13,141 @@ const getWeekNumber = (date = new Date()) => {
   return Math.ceil((((date - onejan) / 86400000) + onejan.getDay() + 1) / 7);
 };
 
-const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) => {
+const RoundsManager = ({ players: propPlayers = [], onUpdatePlayers, onReload }) => {
+  const {
+    players: contextPlayers,
+    rounds: contextRounds,
+    loading: contextLoading,
+    refreshing: contextRefreshing,
+    refresh,
+    actions,
+    helpers,
+  } = useLeagueData();
+
   // Estados principais
   const [allRounds, setAllRounds] = useState([]);
   const [activeRound, setActiveRound] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [localLoading, setLocalLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
   
   // Estados dos modals
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showFinishModal, setShowFinishModal] = useState(false);
   const [showResultsModal, setShowResultsModal] = useState(null);
   const [showPaymentModal, setShowPaymentModal] = useState(null);
-  
+
   const { user } = useAuth();
-  const safePlayers = Array.isArray(players) ? players : [];
+  const playerSource = Array.isArray(propPlayers) && propPlayers.length > 0 ? propPlayers : contextPlayers;
+  const safePlayers = Array.isArray(playerSource) ? playerSource : [];
+  const isLoading = contextLoading || contextRefreshing || localLoading;
 
-  // Função centralizada para carregar dados
-  const loadAllRounds = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      console.log('🔄 Carregando todas as rondas...');
-      
-      const rounds = await firestoreService.getRounds();
-      console.log(`📊 ${rounds.length} rondas carregadas`);
-      
-      // Filtrar rondas válidas (não duplicadas)
-      const validRounds = rounds.filter(r => !r.isDuplicate && !r.deleted);
-      
-      // Ordenar por data de criação (mais recente primeiro)
-      const sortedRounds = validRounds.sort((a, b) => 
-        new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
-      );
-      
-      setAllRounds(sortedRounds);
-      
-      // Encontrar ronda ativa (deve haver apenas uma)
-      const activeRounds = sortedRounds.filter(r => r.status === 'active');
-      
-      if (activeRounds.length > 1) {
-        console.warn('⚠️ Múltiplas rondas ativas detectadas! Corrigindo...');
-        // Manter apenas a mais recente como ativa
-        const mostRecent = activeRounds[0];
-        setActiveRound(mostRecent);
-        
-        // Marcar as outras como completas
-        for (let i = 1; i < activeRounds.length; i++) {
-          await firestoreService.updateRound(activeRounds[i].id, {
-            status: 'completed',
-            autoFixed: true,
-            fixedAt: new Date().toISOString(),
-            note: 'Corrigido automaticamente - múltiplas rondas ativas'
-          });
-        }
-      } else if (activeRounds.length === 1) {
-        setActiveRound(activeRounds[0]);
-      } else {
-        setActiveRound(null);
-      }
-      
-      return sortedRounds;
-      
-    } catch (error) {
-      console.error('❌ Erro ao carregar rondas:', error);
-      setActiveRound(null);
-      return [];
-    } finally {
-      setIsLoading(false);
+  const safeRefresh = useCallback(async () => {
+    if (!refresh) {
+      return;
     }
-  }, []);
 
-  // Carregar dados ao montar e quando refreshKey mudar
+    try {
+      await refresh();
+    } catch (error) {
+      console.error('❌ Erro ao atualizar dados da liga:', error);
+    }
+  }, [refresh]);
+
   useEffect(() => {
-    loadAllRounds();
-  }, [loadAllRounds, refreshKey]);
+    let cancelled = false;
+
+    const synchroniseRounds = async () => {
+      setLocalLoading(true);
+
+      try {
+        const baseRounds = Array.isArray(contextRounds)
+          ? contextRounds.filter((round) => !round.isDuplicate && !round.deleted)
+          : [];
+
+        const sortedRounds = [...baseRounds].sort(
+          (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0),
+        );
+
+        if (!cancelled) {
+          setAllRounds(sortedRounds);
+        }
+
+        const activeRounds = sortedRounds.filter((round) => round.status === 'active');
+
+        if (!cancelled) {
+          setActiveRound(activeRounds[0] || null);
+        }
+
+        if (activeRounds.length > 1) {
+          console.warn('⚠️ Múltiplas rondas ativas detectadas! Corrigindo...');
+          const [mostRecent, ...others] = activeRounds;
+
+          if (!cancelled) {
+            setActiveRound(mostRecent);
+          }
+
+          if (others.length > 0) {
+            try {
+              await Promise.all(
+                others.map((round) =>
+                  actions.updateRound(
+                    round.id,
+                    {
+                      status: 'completed',
+                      autoFixed: true,
+                      fixedAt: new Date().toISOString(),
+                      note: 'Corrigido automaticamente - múltiplas rondas ativas',
+                    },
+                    { skipReload: true, silent: true },
+                  ),
+                ),
+              );
+
+              if (!cancelled) {
+                await safeRefresh();
+              }
+            } catch (updateError) {
+              console.error('❌ Erro ao corrigir rondas ativas duplicadas:', updateError);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('❌ Erro ao sincronizar rondas:', error);
+
+        if (!cancelled) {
+          setAllRounds([]);
+          setActiveRound(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLocalLoading(false);
+        }
+      }
+    };
+
+    synchroniseRounds();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contextRounds, actions, safeRefresh]);
 
   // Função para forçar refresh
   const forceRefresh = useCallback(async () => {
-    setRefreshKey(prev => prev + 1);
+    setLocalLoading(true);
 
-    if (typeof onReload === 'function') {
-      try {
+    try {
+      await safeRefresh();
+
+      if (typeof onReload === 'function') {
         await onReload();
-      } catch (error) {
-        console.error('❌ Erro ao atualizar dados externos:', error);
       }
+    } catch (error) {
+      console.error('❌ Erro ao atualizar dados externos:', error);
+    } finally {
+      setLocalLoading(false);
     }
-  }, [onReload]);
+  }, [onReload, safeRefresh]);
 
   // Helpers para obter dados
   const getCompletedRounds = () => allRounds.filter(r => r.status === 'completed');
@@ -178,15 +224,12 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
       
       console.log('📝 Criando nova ronda:', newRound.name);
       
-      const result = await firestoreService.addRound(newRound);
+      const result = await actions.addRound(newRound);
       
       if (result.success) {
         console.log('✅ Ronda criada com sucesso:', result.id);
         setShowCreateModal(false);
-        
-        // Forçar recarregamento completo
-        await loadAllRounds();
-        
+
         alert('🎉 Ronda criada com sucesso!');
         return true;
       } else {
@@ -209,7 +252,15 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
       console.log('🏁 Finalizando ronda:', roundId);
       
       // Buscar dados atualizados da ronda
-      const round = await firestoreService.getRoundById(roundId);
+      let round = null;
+
+      if (helpers?.getRoundById) {
+        round = await helpers.getRoundById(roundId);
+      }
+
+      if (!round) {
+        round = contextRounds.find((r) => r.id === roundId) || allRounds.find((r) => r.id === roundId) || null;
+      }
       
       if (!round) {
         throw new Error('Ronda não encontrada');
@@ -217,7 +268,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
       
       if (round.status !== 'active') {
         alert('⚠️ Esta ronda já foi finalizada!');
-        await loadAllRounds();
+        await safeRefresh();
         return false;
       }
       
@@ -276,8 +327,14 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
         });
       }
 
-      // Obter versão mais recente dos jogadores diretamente do Firestore para evitar dados desatualizados
-      const freshPlayers = await firestoreService.getPlayers();
+      // Obter versão mais recente dos jogadores para evitar dados desatualizados
+      let freshPlayers = [];
+
+      if (helpers?.fetchPlayers) {
+        freshPlayers = await helpers.fetchPlayers();
+      } else {
+        freshPlayers = contextPlayers;
+      }
       const playersMap = new Map();
       const playersByName = new Map();
 
@@ -449,12 +506,16 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
 
       // Atualizar ronda no Firebase PRIMEIRO
       console.log('📝 Atualizando status da ronda...');
-      const updateResult = await firestoreService.updateRound(roundId, {
-        status: 'completed',
-        participants: finalParticipants,
-        completedAt: new Date().toISOString(),
-        completedBy: user?.uid || 'anonymous'
-      });
+      const updateResult = await actions.updateRound(
+        roundId,
+        {
+          status: 'completed',
+          participants: finalParticipants,
+          completedAt: new Date().toISOString(),
+          completedBy: user?.uid || 'anonymous',
+        },
+        { skipReload: true, silent: true },
+      );
 
       if (!updateResult.success) {
         throw new Error('Falha ao atualizar ronda');
@@ -513,7 +574,10 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
           };
 
           // Salvar no Firebase
-          const saveResult = await firestoreService.savePlayer(updatedPlayer);
+          const saveResult = await actions.savePlayer(updatedPlayer, {
+            skipReload: true,
+            silent: true,
+          });
 
           if (!saveResult?.success) {
             throw new Error(`Falha ao guardar jogador ${player.name || normalizedPlayerId}`);
@@ -542,16 +606,19 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
           
           // Adicionar transação se houver pagamento
           if (result.weeklyPayment > 0) {
-            await firestoreService.addTransaction({
-              playerId: player.id,
-              playerName: player.name,
-              type: 'debt',
-              amount: result.weeklyPayment,
-              note: `${result.position}º lugar na ${round.name}`,
-              balanceAfter: newBalance,
-              roundId: roundId,
-              date: new Date().toISOString()
-            });
+            await actions.addTransaction(
+              {
+                playerId: player.id,
+                playerName: player.name,
+                type: 'debt',
+                amount: result.weeklyPayment,
+                note: `${result.position}º lugar na ${round.name}`,
+                balanceAfter: newBalance,
+                roundId: roundId,
+                date: new Date().toISOString(),
+              },
+              { skipReload: true, silent: true },
+            );
           }
         } else {
           console.warn('⚠️ Nenhum resultado encontrado para jogador mesmo após normalização:', player);
@@ -575,13 +642,14 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
           console.error('❌ Erro ao recarregar dados externos:', error);
         }
       }
-      
+
+      await safeRefresh();
+
       // Processar pagamentos automáticos se houver
       if (autoPaymentCandidates.length > 0) {
         console.log('💳 Pagamentos automáticos disponíveis:', autoPaymentCandidates.length);
         setShowPaymentModal(autoPaymentCandidates);
       } else {
-        await loadAllRounds();
         alert('🎉 Ronda finalizada com sucesso!');
       }
       
@@ -590,7 +658,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
     } catch (error) {
       console.error('❌ Erro ao finalizar ronda:', error);
       alert(`Erro ao finalizar ronda: ${error.message}`);
-      await loadAllRounds();
+      await safeRefresh();
       return false;
     } finally {
       setIsProcessing(false);
@@ -613,18 +681,21 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
           rounds: updatedRounds
         };
 
-        await firestoreService.savePlayer(updatedPlayer);
+        await actions.savePlayer(updatedPlayer, { skipReload: true, silent: true });
 
         // Adicionar transação
-        await firestoreService.addTransaction({
-          playerId: player.id,
-          playerName: player.name,
-          type: 'payment',
-          amount: totalAmount,
-          note: `Pagamento automático - ${roundsToPay.length} rondas`,
-          balanceAfter: finalBalance,
-          date: new Date().toISOString()
-        });
+        await actions.addTransaction(
+          {
+            playerId: player.id,
+            playerName: player.name,
+            type: 'payment',
+            amount: totalAmount,
+            note: `Pagamento automático - ${roundsToPay.length} rondas`,
+            balanceAfter: finalBalance,
+            date: new Date().toISOString(),
+          },
+          { skipReload: true, silent: true },
+        );
 
         console.log(`✅ Pagamento processado: ${player.name} +${totalAmount.toFixed(2)}€`);
       }
@@ -632,12 +703,14 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
       setShowPaymentModal(null);
       
       // Recarregar dados
-      await loadAllRounds();
-      
+      await safeRefresh();
+
       // Atualizar jogadores no componente pai
       if (onUpdatePlayers) {
-        const updatedPlayers = await firestoreService.getPlayers();
-        onUpdatePlayers(updatedPlayers);
+        const updatedPlayers = helpers?.fetchPlayers
+          ? await helpers.fetchPlayers()
+          : contextPlayers;
+        onUpdatePlayers(Array.isArray(updatedPlayers) ? updatedPlayers : []);
       }
 
       if (typeof onReload === 'function') {
@@ -653,6 +726,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
     } catch (error) {
       console.error('❌ Erro ao processar pagamentos:', error);
       alert(`Erro ao processar pagamentos: ${error.message}`);
+      await safeRefresh();
     } finally {
       setIsProcessing(false);
     }
@@ -662,7 +736,7 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
   const cleanDuplicateRounds = async () => {
     try {
       console.log('🧹 Verificando rondas duplicadas...');
-      
+
       const roundsByName = {};
       allRounds.forEach(round => {
         const key = round.name?.toLowerCase();
@@ -671,48 +745,60 @@ const RoundsManager = ({ players = [], onUpdatePlayers, onReload, settings }) =>
         }
         roundsByName[key].push(round);
       });
-      
+
       const duplicateGroups = Object.entries(roundsByName)
         .filter(([name, rounds]) => rounds.length > 1);
-      
+
       if (duplicateGroups.length === 0) {
         console.log('✅ Nenhuma ronda duplicada encontrada');
         return false;
       }
-      
+
       console.warn('⚠️ Rondas duplicadas encontradas:', duplicateGroups.length);
-      
+
+      let changed = false;
+
       for (const [name, rounds] of duplicateGroups) {
         console.log(`🔍 Processando duplicados de: ${name}`);
-        
+
         // Ordenar por data (mais recente primeiro)
-        const sortedRounds = rounds.sort((a, b) => 
+        const sortedRounds = rounds.sort((a, b) =>
           new Date(b.createdAt) - new Date(a.createdAt)
         );
-        
+
         // Manter a mais recente ou a completa
         const roundToKeep = sortedRounds.find(r => r.status === 'completed') || sortedRounds[0];
-        
+
         for (const round of sortedRounds) {
           if (round.id !== roundToKeep.id) {
             console.log(`🗑️ Removendo duplicado: ${round.name} (${round.id})`);
-            
+
             if (round.status === 'completed' && round.participants?.length > 0) {
               // Marcar como duplicada em vez de deletar se tiver dados
-              await firestoreService.updateRound(round.id, {
-                isDuplicate: true,
-                duplicateOf: roundToKeep.id,
-                markedAt: new Date().toISOString()
-              });
+              await actions.updateRound(
+                round.id,
+                {
+                  isDuplicate: true,
+                  duplicateOf: roundToKeep.id,
+                  markedAt: new Date().toISOString(),
+                },
+                { skipReload: true, silent: true },
+              );
             } else {
               // Deletar se não tiver dados importantes
-              await firestoreService.deleteRound(round.id);
+              await actions.deleteRound(round.id, { skipReload: true, silent: true });
             }
+
+            changed = true;
           }
         }
       }
-      
-      return true;
+
+      if (changed) {
+        await safeRefresh();
+      }
+
+      return changed;
     } catch (error) {
       console.error('❌ Erro ao limpar duplicados:', error);
       return false;
@@ -756,7 +842,6 @@ const getDefaultPaymentStructure = (playerCount) => {
 };
 
   // Obter dados para renderização
-  const completedRounds = getCompletedRounds();
   const monthlyRounds = getCurrentMonthRounds();
 
   return (
@@ -815,7 +900,6 @@ const getDefaultPaymentStructure = (playerCount) => {
                   )) {
                     const cleaned = await cleanDuplicateRounds();
                     if (cleaned) {
-                      await loadAllRounds();
                       alert('✅ Rondas duplicadas limpas com sucesso!');
                     }
                   }
@@ -828,48 +912,60 @@ const getDefaultPaymentStructure = (playerCount) => {
             )}
 
             {/* Botão temporário para corrigir ronda */}
-<button
-  onClick={async () => {
-    console.log('Corrigindo ronda sem participantes...');
-    
-    // Buscar rondas
-    const rounds = await firestoreService.getRounds();
-    const problemRound = rounds.find(r => 
-      r.status === 'active' && (!r.participants || r.participants.length === 0)
-    );
-    
-    if (problemRound) {
-      // Buscar jogadores
-      const players = await firestoreService.getPlayers();
-      console.log(`Encontrados ${players.length} jogadores`);
-      
-      // Criar participantes
-      const participants = players.map(p => ({
-        playerId: p.id,
-        playerName: p.name,
-        points: 0,
-        position: null,
-        weeklyPayment: 0
-      }));
-      
-      // Atualizar ronda
-      await firestoreService.updateRound(problemRound.id, {
-        participants: participants,
-        updatedAt: new Date().toISOString()
-      });
-      
-      alert(`✅ Ronda corrigida! Agora tem ${participants.length} participantes.`);
-      
-      // Recarregar dados
-      await loadAllRounds();
-    } else {
-      alert('Nenhuma ronda problemática encontrada');
-    }
-  }}
-  className="bg-red-600 text-white px-3 py-2 rounded-lg hover:bg-red-700 transition-colors flex items-center space-x-1 text-sm"
->
-  🔧 Corrigir Ronda
-</button>
+            <button
+              onClick={async () => {
+                console.log('Corrigindo ronda sem participantes...');
+
+                try {
+                  const roundsSource = helpers?.fetchRounds
+                    ? await helpers.fetchRounds()
+                    : contextRounds;
+
+                  const activeRounds = Array.isArray(roundsSource) ? roundsSource : [];
+                  const problemRound = activeRounds.find(
+                    (r) => r.status === 'active' && (!r.participants || r.participants.length === 0),
+                  );
+
+                  if (problemRound) {
+                    const playersList = helpers?.fetchPlayers
+                      ? await helpers.fetchPlayers()
+                      : contextPlayers;
+
+                    const safeList = Array.isArray(playersList) ? playersList : [];
+                    console.log(`Encontrados ${safeList.length} jogadores`);
+
+                    const participants = safeList.map((p) => ({
+                      playerId: p.id,
+                      playerName: p.name,
+                      points: 0,
+                      position: null,
+                      weeklyPayment: 0,
+                    }));
+
+                    await actions.updateRound(
+                      problemRound.id,
+                      {
+                        participants,
+                        updatedAt: new Date().toISOString(),
+                      },
+                      { skipReload: true, silent: true },
+                    );
+
+                    await safeRefresh();
+
+                    alert(`✅ Ronda corrigida! Agora tem ${participants.length} participantes.`);
+                  } else {
+                    alert('Nenhuma ronda problemática encontrada');
+                  }
+                } catch (error) {
+                  console.error('❌ Erro ao corrigir ronda:', error);
+                  alert('Erro ao corrigir ronda. Verifica a consola para detalhes.');
+                }
+              }}
+              className="bg-red-600 text-white px-3 py-2 rounded-lg hover:bg-red-700 transition-colors flex items-center space-x-1 text-sm"
+            >
+              🔧 Corrigir Ronda
+            </button>
             
             {/* Botão de Nova Ronda */}
             <button
@@ -1088,9 +1184,9 @@ const getDefaultPaymentStructure = (playerCount) => {
         <AutoPaymentModal
           candidates={showPaymentModal}
           onConfirm={() => handleAutoPayments(showPaymentModal)}
-          onCancel={() => {
+          onCancel={async () => {
             setShowPaymentModal(null);
-            loadAllRounds();
+            await safeRefresh();
             alert('Ronda finalizada!\n\nPagamentos automáticos podem ser processados mais tarde.');
           }}
           loading={isProcessing}
@@ -1331,12 +1427,6 @@ const FinishRoundModal = ({ round, onClose, onSubmit, loading }) => {
   };
 
   const sortedResults = getSortedResults();
-
-  // Verificar se dois jogadores específicos estão empatados
-  const arePlayersTied = (index1, index2) => {
-    if (!sortedResults[index1] || !sortedResults[index2]) return false;
-    return sortedResults[index1].points === sortedResults[index2].points;
-  };
 
   // Verificar se pode mover para cima
   const canMoveUp = (index) => {

@@ -10,7 +10,7 @@ import {
   CreditCard,
   RefreshCw
 } from 'lucide-react';
-import { firestoreService } from '../../services/firebase';
+import { useLeagueData } from '../../hooks/useLeagueData';
 
 const DebtManager = ({ players, onReload }) => {
   const [processing, setProcessing] = useState(false);
@@ -18,6 +18,7 @@ const DebtManager = ({ players, onReload }) => {
   const [customAmount, setCustomAmount] = useState('');
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [actionType, setActionType] = useState(null);
+  const { actions, refresh } = useLeagueData();
 
   // Calcular estatísticas
   const stats = {
@@ -28,21 +29,29 @@ const DebtManager = ({ players, onReload }) => {
     balanced: players.filter(p => (p.balance || 0) === 0)
   };
 
+  const reloadPlayers = async () => {
+    if (onReload) {
+      await onReload();
+    } else {
+      await refresh();
+    }
+  };
+
   // Quitar dívida individual
   const handleSettleDebt = async (player, amount = null) => {
     setProcessing(true);
     try {
       const settleAmount = amount || Math.abs(player.balance);
-      
-      const result = await firestoreService.settleDebt(
+
+      const result = await actions.settleDebt(
         player.id,
         settleAmount,
         amount ? 'Pagamento parcial' : 'Pagamento total da dívida'
       );
-      
+
       if (result.success) {
         alert(`✅ Dívida de ${player.name} quitada: ${settleAmount.toFixed(2)}€`);
-        onReload();
+        await reloadPlayers();
       } else {
         alert(`❌ Erro ao quitar dívida: ${result.error}`);
       }
@@ -60,11 +69,11 @@ const DebtManager = ({ players, onReload }) => {
   const handleSettleAllDebts = async () => {
     setProcessing(true);
     try {
-      const result = await firestoreService.settleAllDebts();
-      
+      const result = await actions.settleAllDebts();
+
       if (result.success) {
         alert(`✅ Todas as dívidas foram quitadas!`);
-        onReload();
+        await reloadPlayers();
       } else {
         alert(`❌ Erro ao quitar dívidas: ${result.error}`);
       }
@@ -80,11 +89,11 @@ const DebtManager = ({ players, onReload }) => {
   const handleResetBalances = async () => {
     setProcessing(true);
     try {
-      const result = await firestoreService.resetAllBalances();
-      
+      const result = await actions.resetAllBalances();
+
       if (result.success) {
         alert('✅ Todos os saldos foram resetados para 0€');
-        onReload();
+        await reloadPlayers();
       } else {
         alert(`❌ Erro ao resetar saldos: ${result.error}`);
       }
@@ -100,11 +109,11 @@ const DebtManager = ({ players, onReload }) => {
   const handleChargeWeeklyFee = async (amount) => {
     setProcessing(true);
     try {
-      const result = await firestoreService.chargeWeeklyFees(amount);
-      
+      const result = await actions.chargeWeeklyFees(amount);
+
       if (result.success) {
         alert(`✅ Taxa semanal de ${amount}€ cobrada a todos os jogadores`);
-        onReload();
+        await reloadPlayers();
       } else {
         alert(`❌ Erro ao cobrar taxa: ${result.error}`);
       }
