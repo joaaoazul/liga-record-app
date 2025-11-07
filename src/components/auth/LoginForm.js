@@ -1,5 +1,6 @@
 // src/components/auth/LoginForm.js
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Mail, Lock, Trophy, Eye, EyeOff, UserPlus } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 
@@ -14,7 +15,16 @@ const LoginForm = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState('');
 
-  const { signIn, signUp, loading, error, clearError } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { signIn, signUp, loading, error, clearError, user } = useAuth();
+  const from = location.state?.from?.pathname || '/';
+
+  useEffect(() => {
+    if (user) {
+      navigate(from, { replace: true });
+    }
+  }, [user, from, navigate]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -76,18 +86,6 @@ const LoginForm = () => {
     } catch (err) {
       setLocalError('Erro inesperado. Tenta novamente.');
     }
-  };
-
-  const toggleMode = () => {
-    setIsLogin(!isLogin);
-    setLocalError('');
-    clearError();
-    setFormData({
-      email: '',
-      password: '',
-      confirmPassword: '',
-      displayName: ''
-    });
   };
 
   const currentError = localError || error;

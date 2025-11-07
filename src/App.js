@@ -3,7 +3,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './hooks/useAuth';
 import ProtectedRoute from './components/auth/ProtectedRoute';
-import Dashboard from './components/dashboard/Dashboard';
+import LoginForm from './components/auth/LoginForm';
 import './index.css';
 import ResponsiveDashboard from './components/dashboard/ResponsiveDashboard';
 
@@ -11,9 +11,18 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <ProtectedRoute>
-          <ResponsiveDashboard />
-        </ProtectedRoute>
+        <Routes>
+          <Route path="/login" element={<LoginForm />} />
+          <Route
+            path="/"
+            element={(
+              <ProtectedRoute>
+                <ResponsiveDashboard />
+              </ProtectedRoute>
+            )}
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </AuthProvider>
     </BrowserRouter>
   );

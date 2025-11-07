@@ -20,8 +20,7 @@ import {
   query,
   where,
   orderBy,
-  limit,
-  serverTimestamp 
+  limit
 } from 'firebase/firestore';
 
 // =====================================
@@ -108,18 +107,43 @@ export const firestoreService = {
       console.log('🔍 Getting players for user:', userId);
       
       const snapshot = await getDocs(collection(db, 'players'));
-      let players = snapshot.docs.map(doc => ({
+      const players = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      
-      // Filtrar por userId se existir
-      if (userId) {
-        players = players.filter(p => p.userId === userId);
+
+      if (!userId) {
+        console.log('📊 Total players found (no user filter):', players.length);
+        return players;
       }
-      
-      console.log('📊 Total players found:', players.length);
-      return players;
+
+      const filtered = players.filter(p => !p.userId || p.userId === userId);
+
+      if (filtered.length === 0 && players.length > 0) {
+        console.warn('⚠️ No players matched current user filter, returning full roster');
+        return players;
+      }
+
+      if (filtered.length !== players.length) {
+        console.warn('⚠️ Mixed user ownership detected, returning merged roster');
+        const merged = new Map();
+        players.forEach(player => {
+          if (!merged.has(player.id)) {
+            merged.set(player.id, player);
+          }
+        });
+        filtered.forEach(player => {
+          if (!merged.has(player.id)) {
+            merged.set(player.id, player);
+          }
+        });
+        const mergedPlayers = Array.from(merged.values());
+        console.log('📊 Total players found (merged):', mergedPlayers.length);
+        return mergedPlayers;
+      }
+
+      console.log('📊 Total players found (filtered):', filtered.length);
+      return filtered;
     } catch (error) {
       console.error('❌ Error getting players:', error);
       return [];
@@ -236,25 +260,52 @@ export const firestoreService = {
       console.log('🔍 Getting rounds for user:', userId);
       
       const snapshot = await getDocs(collection(db, 'rounds'));
-      let rounds = snapshot.docs.map(doc => ({
+      const rounds = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      
-      // Filtrar por userId se existir
-      if (userId) {
-        rounds = rounds.filter(r => r.userId === userId);
+
+      const sortRounds = data =>
+        data.sort((a, b) => {
+          const dateA = new Date(a.createdAt || 0);
+          const dateB = new Date(b.createdAt || 0);
+          return dateB - dateA;
+        });
+
+      if (!userId) {
+        const sorted = sortRounds([...rounds]);
+        console.log('📊 Total rounds found (no user filter):', sorted.length);
+        return sorted;
       }
-      
-      // Ordenar por data de criação
-      rounds.sort((a, b) => {
-        const dateA = new Date(a.createdAt || 0);
-        const dateB = new Date(b.createdAt || 0);
-        return dateB - dateA;
-      });
-      
-      console.log('📊 Total rounds found:', rounds.length);
-      return rounds;
+
+      const filtered = rounds.filter(r => !r.userId || r.userId === userId);
+
+      if (filtered.length === 0 && rounds.length > 0) {
+        console.warn('⚠️ No rounds matched current user filter, returning full history');
+        return sortRounds([...rounds]);
+      }
+
+      if (filtered.length !== rounds.length) {
+        console.warn('⚠️ Mixed round ownership detected, returning merged history');
+        const merged = new Map();
+        rounds.forEach(round => {
+          if (!merged.has(round.id)) {
+            merged.set(round.id, round);
+          }
+        });
+        filtered.forEach(round => {
+          if (!merged.has(round.id)) {
+            merged.set(round.id, round);
+          }
+        });
+        const mergedRounds = sortRounds(Array.from(merged.values()));
+        console.log('📊 Total rounds found (merged):', mergedRounds.length);
+        return mergedRounds;
+      }
+
+      const sortedFiltered = sortRounds([...filtered]);
+      console.log('📊 Total rounds found (filtered):', sortedFiltered.length);
+      return sortedFiltered;
     } catch (error) {
       console.error('❌ Error getting rounds:', error);
       return [];
@@ -300,8 +351,10 @@ export const firestoreService = {
         ...roundData,
         userId: userId || 'anonymous',
         createdAt: new Date().toISOString(),
-        status: 'active',
-        participants: []
+        status: roundData.status || 'active',
+        participants: Array.isArray(roundData.participants)
+          ? roundData.participants
+          : []
       };
       
       const docRef = await addDoc(collection(db, 'rounds'), round);
@@ -353,25 +406,52 @@ export const firestoreService = {
       console.log('🔍 Getting transactions for user:', userId);
       
       const snapshot = await getDocs(collection(db, 'transactions'));
-      let transactions = snapshot.docs.map(doc => ({
+      const transactions = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      
-      // Filtrar por userId se existir
-      if (userId) {
-        transactions = transactions.filter(t => t.userId === userId);
+
+      const sortTransactions = data =>
+        data.sort((a, b) => {
+          const dateA = new Date(a.date || a.createdAt || 0);
+          const dateB = new Date(b.date || b.createdAt || 0);
+          return dateB - dateA;
+        });
+
+      if (!userId) {
+        const sorted = sortTransactions([...transactions]);
+        console.log('📊 Total transactions found (no user filter):', sorted.length);
+        return sorted;
       }
-      
-      // Ordenar por data
-      transactions.sort((a, b) => {
-        const dateA = new Date(a.date || a.createdAt || 0);
-        const dateB = new Date(b.date || b.createdAt || 0);
-        return dateB - dateA;
-      });
-      
-      console.log('📊 Total transactions found:', transactions.length);
-      return transactions;
+
+      const filtered = transactions.filter(t => !t.userId || t.userId === userId);
+
+      if (filtered.length === 0 && transactions.length > 0) {
+        console.warn('⚠️ No transactions matched current user filter, returning full ledger');
+        return sortTransactions([...transactions]);
+      }
+
+      if (filtered.length !== transactions.length) {
+        console.warn('⚠️ Mixed transaction ownership detected, returning merged ledger');
+        const merged = new Map();
+        transactions.forEach(transaction => {
+          if (!merged.has(transaction.id)) {
+            merged.set(transaction.id, transaction);
+          }
+        });
+        filtered.forEach(transaction => {
+          if (!merged.has(transaction.id)) {
+            merged.set(transaction.id, transaction);
+          }
+        });
+        const mergedTransactions = sortTransactions(Array.from(merged.values()));
+        console.log('📊 Total transactions found (merged):', mergedTransactions.length);
+        return mergedTransactions;
+      }
+
+      const sortedFiltered = sortTransactions([...filtered]);
+      console.log('📊 Total transactions found (filtered):', sortedFiltered.length);
+      return sortedFiltered;
     } catch (error) {
       console.error('❌ Error getting transactions:', error);
       return [];
@@ -477,7 +557,7 @@ export const firestoreService = {
   async chargeWeeklyFees(amount) {
     try {
       console.log('💰 Charging weekly fees:', amount);
-      
+
       const players = await this.getPlayers();
       
       for (const player of players) {
@@ -505,10 +585,72 @@ export const firestoreService = {
     }
   },
 
+  async addDebt(playerId, amount, note = 'Taxa/Multa adicionada') {
+    try {
+      const numericAmount = Number(amount);
+      if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+        throw new Error('Valor inválido');
+      }
+
+      const player = await this.getPlayerById(playerId);
+      if (!player) {
+        throw new Error('Player not found');
+      }
+
+      const newBalance = Number(player.balance || 0) - numericAmount;
+
+      await this.updatePlayer(playerId, { balance: newBalance });
+      await this.addTransaction({
+        playerId,
+        playerName: player.name,
+        type: 'debt',
+        amount: numericAmount,
+        note,
+        balanceAfter: newBalance,
+      });
+
+      return { success: true, newBalance };
+    } catch (error) {
+      console.error('❌ Error adding debt:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async payDebt(playerId, amount, note = 'Pagamento de dívida') {
+    try {
+      const numericAmount = Number(amount);
+      if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+        throw new Error('Valor inválido');
+      }
+
+      const player = await this.getPlayerById(playerId);
+      if (!player) {
+        throw new Error('Player not found');
+      }
+
+      const newBalance = Number(player.balance || 0) + numericAmount;
+
+      await this.updatePlayer(playerId, { balance: newBalance });
+      await this.addTransaction({
+        playerId,
+        playerName: player.name,
+        type: 'payment',
+        amount: numericAmount,
+        note,
+        balanceAfter: newBalance,
+      });
+
+      return { success: true, newBalance };
+    } catch (error) {
+      console.error('❌ Error paying debt:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
   async settleAllDebts() {
     try {
       console.log('💳 Settling all debts');
-      
+
       const players = await this.getPlayers();
       
       for (const player of players) {
@@ -560,6 +702,37 @@ export const firestoreService = {
       return { success: true, newBalance };
     } catch (error) {
       console.error('❌ Error settling debt:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async resetAllBalances() {
+    try {
+      console.log('🔄 Resetting all balances to zero');
+
+      const players = await this.getPlayers();
+
+      await Promise.all(players.map(async (player) => {
+        const currentBalance = Number(player.balance || 0);
+
+        if (currentBalance !== 0) {
+          await this.updatePlayer(player.id, { balance: 0 });
+
+          await this.addTransaction({
+            playerId: player.id,
+            playerName: player.name,
+            type: currentBalance < 0 ? 'payment' : 'debt',
+            amount: Math.abs(currentBalance),
+            note: 'Reset de saldo',
+            balanceAfter: 0,
+          });
+        }
+      }));
+
+      console.log('✅ All balances reset successfully');
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Error resetting balances:', error);
       return { success: false, error: error.message };
     }
   },
@@ -621,46 +794,83 @@ export const firestoreService = {
     try {
       const userId = getCurrentUserId();
       console.log('📊 Generating financial report');
-      
+
       // Buscar todos os dados necessários
       const [players, transactions, rounds] = await Promise.all([
         this.getPlayers(),
         this.getTransactions(),
         this.getRounds()
       ]);
-      
+
+      const toNumber = (value) => {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : 0;
+      };
+
       // Calcular estatísticas
       const completedRounds = rounds.filter(r => r.status === 'completed');
-      
+
+      const season = completedRounds.find(r => r.year)?.year || new Date().getFullYear();
+
       const playerSummary = players.map(player => {
         const playerTransactions = transactions.filter(t => t.playerId === player.id);
         const totalDebts = playerTransactions
           .filter(t => t.type === 'debt')
-          .reduce((sum, t) => sum + t.amount, 0);
+          .reduce((sum, t) => sum + toNumber(t.amount), 0);
         const totalPayments = playerTransactions
           .filter(t => t.type === 'payment')
-          .reduce((sum, t) => sum + t.amount, 0);
-        
+          .reduce((sum, t) => sum + toNumber(t.amount), 0);
+
+        const currentBalance = toNumber(
+          player.balance !== undefined && player.balance !== null
+            ? player.balance
+            : totalPayments - totalDebts
+        );
+
+        const totalOwed = Math.max(0, -currentBalance);
+        const netBalance = currentBalance;
+        const roundsPlayed =
+          player.totalRounds !== undefined
+            ? player.totalRounds
+            : Array.isArray(player.rounds)
+              ? player.rounds.length
+              : 0;
+
         return {
           playerId: player.id,
           playerName: player.name,
-          currentBalance: player.balance || 0,
+          currentBalance,
           totalDebts,
           totalPayments,
-          netBalance: totalPayments - totalDebts,
-          roundsPlayed: player.totalRounds || 0,
-          totalPoints: player.totalPoints || 0
+          totalPaid: totalPayments,
+          totalOwed,
+          netBalance,
+          roundsPlayed,
+          totalPoints: toNumber(player.totalPoints)
         };
       });
-      
+
+      const totalToCollect = playerSummary.reduce((sum, p) => sum + toNumber(p.totalOwed), 0);
+      const totalToPay = playerSummary.reduce(
+        (sum, p) => sum + Math.max(0, toNumber(p.netBalance)),
+        0
+      );
+      const netBalanceTotal = playerSummary.reduce(
+        (sum, p) => sum + toNumber(p.netBalance),
+        0
+      );
+
       const totals = {
         totalPlayers: players.length,
         totalRounds: completedRounds.length,
         totalDebt: playerSummary.reduce((sum, p) => sum + Math.max(0, -p.currentBalance), 0),
         totalCredit: playerSummary.reduce((sum, p) => sum + Math.max(0, p.currentBalance), 0),
-        dinnerPot: Math.abs(playerSummary.reduce((sum, p) => sum + p.currentBalance, 0))
+        dinnerPot: Math.abs(netBalanceTotal),
+        totalToCollect,
+        totalToPay,
+        netBalance: netBalanceTotal
       };
-      
+
       const reportData = {
         leagueId,
         userId,
@@ -668,25 +878,109 @@ export const firestoreService = {
         playerSummary,
         totals,
         rounds: completedRounds.length,
-        status: 'generated'
+        status: 'generated',
+        season
       };
-      
+
       // Guardar relatório
       const docRef = await addDoc(collection(db, 'reports'), reportData);
-      
+
       console.log('✅ Financial report generated:', docRef.id);
       return { success: true, reportId: docRef.id, data: reportData };
     } catch (error) {
       console.error('❌ Error generating report:', error);
       return { success: false, error: error.message };
     }
+  },
+
+  async getFinancialReports(limitCount = 12) {
+    try {
+      const userId = getCurrentUserId();
+      console.log('📄 Getting financial reports for user:', userId);
+
+      const reportsQuery = query(
+        collection(db, 'reports'),
+        orderBy('generatedAt', 'desc'),
+        limit(limitCount)
+      );
+
+      const snapshot = await getDocs(reportsQuery);
+
+      const reports = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      if (!userId) {
+        console.log('📊 Financial reports found (no user filter):', reports.length);
+        return reports;
+      }
+
+      const filtered = reports.filter(report => !report.userId || report.userId === userId);
+
+      if (filtered.length === 0 && reports.length > 0) {
+        console.warn('⚠️ No reports matched current user filter, returning full archive');
+        return reports;
+      }
+
+      if (filtered.length !== reports.length) {
+        console.warn('⚠️ Mixed report ownership detected, returning merged archive');
+        const merged = new Map();
+        reports.forEach(report => {
+          if (!merged.has(report.id)) {
+            merged.set(report.id, report);
+          }
+        });
+        filtered.forEach(report => {
+          if (!merged.has(report.id)) {
+            merged.set(report.id, report);
+          }
+        });
+        const mergedReports = Array.from(merged.values());
+        console.log('📊 Financial reports found (merged):', mergedReports.length);
+        return mergedReports;
+      }
+
+      console.log('📊 Financial reports found (filtered):', filtered.length);
+      return filtered;
+    } catch (error) {
+      console.error('❌ Error getting financial reports:', error);
+      return [];
+    }
+  },
+
+  async getFinancialReport(reportId) {
+    try {
+      if (!reportId) {
+        console.warn('⚠️ No reportId provided for getFinancialReport');
+        return null;
+      }
+
+      const reportRef = doc(db, 'reports', reportId);
+      const reportDoc = await getDoc(reportRef);
+
+      if (!reportDoc.exists()) {
+        console.warn('⚠️ Financial report not found:', reportId);
+        return null;
+      }
+
+      return {
+        id: reportDoc.id,
+        ...reportDoc.data()
+      };
+    } catch (error) {
+      console.error('❌ Error getting financial report:', error);
+      return null;
+    }
   }
 };
 
 // Export tudo como default também para compatibilidade
-export default {
+const firebaseModule = {
   auth,
   db,
   authService,
   firestoreService
 };
+
+export default firebaseModule;

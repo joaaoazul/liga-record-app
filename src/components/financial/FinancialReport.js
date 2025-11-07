@@ -1,40 +1,102 @@
 // src/components/financial/FinancialReport.js
-import React, { useState, useEffect } from 'react';
-import { FileText, Download, Share2, DollarSign, Users, TrendingUp, AlertCircle } from 'lucide-react';
-import { firestoreService } from '../../services/firebase';
+import React, { useCallback, useEffect, useState } from 'react';
+import { FileText, Download, Share2, DollarSign, Users, TrendingUp, AlertCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
+import { useLeagueData } from '../../hooks/useLeagueData';
 
-const FinancialReport = ({ onBack, players }) => {
-  const [reports, setReports] = useState([]);
+const formatCurrency = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(2) : '0.00';
+};
+
+const FinancialReport = ({ onBack }) => {
+  const { user } = useAuth();
+  const {
+    reports,
+    actions,
+    helpers,
+    refresh,
+    loading: globalLoading,
+    refreshing,
+    error: dataError,
+  } = useLeagueData();
+  const [selectedReportId, setSelectedReportId] = useState(null);
   const [selectedReport, setSelectedReport] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingSelection, setLoadingSelection] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
-  const { user } = useAuth();
 
   // IDs dos admins - SUBSTITUI COM OS VOSSOS IDs REAIS
-  const ADMIN_ID = 'SEU_USER_ID_AQUI';
-  const MANAGER_ID = 'RICARDO_USER_ID_AQUI';
+  const ADMIN_IDS = ['SEU_USER_ID_AQUI', 'RICARDO_USER_ID_AQUI']
+    .filter(id => id && !id.includes('AQUI'));
 
-  const isAdmin = user?.uid === ADMIN_ID || user?.uid === MANAGER_ID;
+  const isAdmin = ADMIN_IDS.length === 0 || ADMIN_IDS.includes(user?.uid);
 
   useEffect(() => {
-    loadReports();
-  }, []);
-
-  const loadReports = async () => {
-    setLoading(true);
-    try {
-      const reportsData = await firestoreService.getFinancialReports();
-      setReports(reportsData);
-      setError(null);
-    } catch (error) {
-      console.error('Error loading reports:', error);
-      setError('Erro ao carregar relatórios');
-    } finally {
-      setLoading(false);
+    if (!reports || reports.length === 0) {
+      setSelectedReport(null);
+      setSelectedReportId(null);
+      return;
     }
-  };
+
+    if (!selectedReportId) {
+      const firstReport = reports[0];
+      setSelectedReportId(firstReport.id);
+      setSelectedReport(firstReport);
+      return;
+    }
+
+    const matched = reports.find(report => report.id === selectedReportId);
+
+    if (matched && !loadingSelection) {
+      setSelectedReport(prev => ({
+        ...matched,
+        playerSummary: matched.playerSummary?.length
+          ? matched.playerSummary
+          : prev?.playerSummary || [],
+      }));
+    }
+  }, [reports, selectedReportId, loadingSelection]);
+
+  const fetchDetailedReport = useCallback(
+    async (reportId) => {
+      if (!reportId) return;
+
+      setLoadingSelection(true);
+      try {
+        const detailed = await helpers.getFinancialReport(reportId);
+        if (detailed) {
+          setSelectedReport(detailed);
+        } else {
+          const fallback = reports.find(report => report.id === reportId);
+          if (fallback) {
+            setSelectedReport(fallback);
+          }
+        }
+        setError(null);
+      } catch (err) {
+        console.error('Erro ao carregar relatório:', err);
+        setError('Erro ao carregar relatório selecionado');
+      } finally {
+        setLoadingSelection(false);
+      }
+    },
+    [helpers, reports],
+  );
+
+  const handleSelectReport = useCallback(
+    async (report) => {
+      if (!report) return;
+      setSelectedReportId(report.id);
+
+      if (!report.playerSummary || report.playerSummary.length === 0) {
+        await fetchDetailedReport(report.id);
+      } else {
+        setSelectedReport(report);
+      }
+    },
+    [fetchDetailedReport],
+  );
 
   const generateReport = async () => {
     if (!isAdmin) {
@@ -44,19 +106,18 @@ const FinancialReport = ({ onBack, players }) => {
 
     setGenerating(true);
     setError(null);
-    
+
     try {
       console.log('📊 Iniciando geração do relatório...');
-      const result = await firestoreService.generateFinancialReport();
-      
+      const result = await actions.generateFinancialReport();
+
       if (result.success) {
         alert('✅ Relatório gerado com sucesso!');
-        await loadReports();
-        
-        // Selecionar automaticamente o novo relatório
-        const newReport = await firestoreService.getFinancialReport(result.reportId);
-        if (newReport) {
-          setSelectedReport(newReport);
+        if (result.reportId) {
+          setSelectedReportId(result.reportId);
+          await fetchDetailedReport(result.reportId);
+        } else {
+          await refresh();
         }
       } else {
         setError(result.error);
@@ -71,129 +132,119 @@ const FinancialReport = ({ onBack, players }) => {
     }
   };
 
-  // src/components/financial/FinancialReport.js - Modifica a função shareWhatsApp
+  const handleReload = async () => {
+    setError(null);
+    await refresh();
+  };
 
+  const combinedError = error || dataError;
+  const isLoading = globalLoading && (!reports || reports.length === 0);
 
-const shareWhatsApp = () => {
-  if (!selectedReport) {
-    alert('Nenhum relatório selecionado!');
-    return;
-  }
-  
-  // Verificar se os dados existem
-  if (!selectedReport.playerSummary || selectedReport.playerSummary.length === 0) {
-    alert('❌ Relatório sem dados de jogadores!');
-    return;
-  }
-  
-  // Ordenar jogadores: primeiro quem deve, depois quem recebe
-  const sortedPlayers = [...selectedReport.playerSummary].sort((a, b) => {
-    const balanceA = a.netBalance || a.currentBalance || 0;
-    const balanceB = b.netBalance || b.currentBalance || 0;
-    return balanceA - balanceB;
-  });
-  
-  // Separar devedores e credores
-  const devedores = sortedPlayers.filter(p => (p.totalOwed || 0) > 0);
-  const credores = sortedPlayers.filter(p => (p.netBalance || p.currentBalance || 0) > 0);
-  const neutros = sortedPlayers.filter(p => {
-    const balance = p.netBalance || p.currentBalance || 0;
-    const owed = p.totalOwed || 0;
-    return balance === 0 && owed === 0;
-  });
-  
-  // Construir mensagem estilizada
-  let message = `⚽ *LIGA RECORD DOS CUÍCOS* ⚽\n`;
-  message += `━━━━━━━━━━━━━━━━━━━━\n`;
-  message += `📊 *ACERTO DE CONTAS*\n`;
-  message += `🗓️ _${new Date().toLocaleDateString('pt-PT', { 
-    day: 'numeric', 
-    month: 'long', 
-    year: 'numeric' 
-  })}_\n`;
-  message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
-  
-  // Seção de quem deve pagar
-  if (devedores.length > 0) {
-    message += `💸 *DEVEM PAGAR:*\n`;
-    message += `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n`;
-    devedores.forEach((player, index) => {
-      const owed = player.totalOwed || 0;
-      // Usar emojis diferentes para variar
-      const emoji = index % 2 === 0 ? '👉' : '▶️';
-      message += `${emoji} *${player.playerName}*\n`;
-      message += `     └─ €${owed.toFixed(2)} 💶\n`;
+  const shareWhatsApp = useCallback(() => {
+    if (!selectedReport) {
+      alert('Nenhum relatório selecionado!');
+      return;
+    }
+
+    if (!selectedReport.playerSummary || selectedReport.playerSummary.length === 0) {
+      alert('❌ Relatório sem dados de jogadores!');
+      return;
+    }
+
+    const sortedPlayers = [...selectedReport.playerSummary].sort((a, b) => {
+      const balanceA = a.netBalance || a.currentBalance || 0;
+      const balanceB = b.netBalance || b.currentBalance || 0;
+      return balanceA - balanceB;
     });
-    message += `\n`;
-  }
-  
-  // Seção de quem vai receber
-  if (credores.length > 0) {
-    message += `💰 *VÃO RECEBER:*\n`;
-    message += `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n`;
-    credores.forEach((player, index) => {
-      const receive = player.netBalance || player.currentBalance || 0;
-      const emoji = index % 2 === 0 ? '✅' : '🎯';
-      message += `${emoji} *${player.playerName}*\n`;
-      message += `     └─ €${receive.toFixed(2)} 💵\n`;
+
+    const devedores = sortedPlayers.filter(p => (p.totalOwed || 0) > 0);
+    const credores = sortedPlayers.filter(p => (p.netBalance || p.currentBalance || 0) > 0);
+    const neutros = sortedPlayers.filter(p => {
+      const balance = p.netBalance || p.currentBalance || 0;
+      const owed = p.totalOwed || 0;
+      return balance === 0 && owed === 0;
     });
-    message += `\n`;
-  }
-  
-  // Seção dos neutros (se houver)
-  if (neutros.length > 0 && neutros.length <= 3) { // Só mostrar se forem poucos
-    message += `⚖️ *EQUILIBRADOS:*\n`;
-    neutros.forEach(player => {
-      message += `• ${player.playerName}\n`;
+
+    let message = `⚽ *LIGA RECORD DOS CUÍCOS* ⚽\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━\n`;
+    message += `📊 *ACERTO DE CONTAS*\n`;
+    message += `🗓️ _${new Date().toLocaleDateString('pt-PT', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    })}_\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    if (devedores.length > 0) {
+      message += `💸 *DEVEM PAGAR:*\n`;
+      message += `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n`;
+      devedores.forEach((player, index) => {
+        const owed = player.totalOwed || 0;
+        const emoji = index % 2 === 0 ? '👉' : '▶️';
+        message += `${emoji} *${player.playerName}*\n`;
+        message += `     └─ €${formatCurrency(owed)} 💶\n`;
+      });
+      message += `\n`;
+    }
+
+    if (credores.length > 0) {
+      message += `💰 *VÃO RECEBER:*\n`;
+      message += `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n`;
+      credores.forEach((player, index) => {
+        const receive = player.netBalance || player.currentBalance || 0;
+        const emoji = index % 2 === 0 ? '✅' : '🎯';
+        message += `${emoji} *${player.playerName}*\n`;
+        message += `     └─ €${formatCurrency(receive)} 💵\n`;
+      });
+      message += `\n`;
+    }
+
+    if (neutros.length > 0 && neutros.length <= 3) {
+      message += `⚖️ *EQUILIBRADOS:*\n`;
+      neutros.forEach(player => {
+        message += `• ${player.playerName}\n`;
+      });
+      message += `\n`;
+    }
+
+    message += `━━━━━━━━━━━━━━━━━━━━\n`;
+    message += `📈 *RESUMO FINAL*\n`;
+    message += `├─ 💸 Total: *€${formatCurrency(selectedReport.totals?.totalToCollect)}*\n`;
+    message += `├─ 👥 Jogadores: *${selectedReport.playerSummary.length}*\n`;
+    message += `└─ 🏆 Época: *${selectedReport.season || new Date().getFullYear()}*\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    message += `_Gerado automaticamente_\n`;
+    message += `🤖 _Liga Record System_`;
+
+    const encodedMessage = encodeURIComponent(message);
+    const whatsappUrl = `https://wa.me/?text=${encodedMessage}`;
+
+    console.log('📱 Tamanho da mensagem:', message.length, 'caracteres');
+    console.log('📱 Tamanho da URL:', whatsappUrl.length, 'caracteres');
+
+    if (whatsappUrl.length > 6000) {
+      let compactMessage = `⚽ *LIGA RECORD* ⚽\n\n`;
+      compactMessage += `💸 *PAGAMENTOS:*\n`;
+      devedores.forEach(p => {
+        compactMessage += `${p.playerName}: -€${formatCurrency(p.totalOwed)}\n`;
+      });
+      compactMessage += `\n💰 *RECEBEM:*\n`;
+      credores.forEach(p => {
+        const amount = p.netBalance || p.currentBalance || 0;
+        compactMessage += `${p.playerName}: +€${formatCurrency(amount)}\n`;
+      });
+      compactMessage += `\n*TOTAL: €${formatCurrency(selectedReport.totals?.totalToCollect)}*`;
+
+      window.open(`https://wa.me/?text=${encodeURIComponent(compactMessage)}`, '_blank');
+    } else {
+      window.open(whatsappUrl, '_blank');
+    }
+
+    navigator.clipboard.writeText(message).catch(() => {
+      console.log('Não foi possível copiar para clipboard');
     });
-    message += `\n`;
-  }
-  
-  // Resumo final
-  message += `━━━━━━━━━━━━━━━━━━━━\n`;
-  message += `📈 *RESUMO FINAL*\n`;
-  message += `├─ 💸 Total: *€${(selectedReport.totals?.totalToCollect || 0).toFixed(2)}*\n`;
-  message += `├─ 👥 Jogadores: *${selectedReport.playerSummary.length}*\n`;
-  message += `└─ 🏆 Época: *${selectedReport.season || new Date().getFullYear()}*\n`;
-  message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
-  
-  // Assinatura
-  message += `_Gerado automaticamente_\n`;
-  message += `🤖 _Liga Record System_`;
-  
-  // Verificar tamanho e enviar
-  const encodedMessage = encodeURIComponent(message);
-  const whatsappUrl = `https://wa.me/?text=${encodedMessage}`;
-  
-  console.log('📱 Tamanho da mensagem:', message.length, 'caracteres');
-  console.log('📱 Tamanho da URL:', whatsappUrl.length, 'caracteres');
-  
-  if (whatsappUrl.length > 6000) {
-    // Versão ultra compacta se ainda for muito grande
-    let compactMessage = `⚽ *LIGA RECORD* ⚽\n\n`;
-    compactMessage += `💸 *PAGAMENTOS:*\n`;
-    devedores.forEach(p => {
-      compactMessage += `${p.playerName}: -€${p.totalOwed.toFixed(2)}\n`;
-    });
-    compactMessage += `\n💰 *RECEBEM:*\n`;
-    credores.forEach(p => {
-      const amount = p.netBalance || p.currentBalance || 0;
-      compactMessage += `${p.playerName}: +€${amount.toFixed(2)}\n`;
-    });
-    compactMessage += `\n*TOTAL: €${(selectedReport.totals?.totalToCollect || 0).toFixed(2)}*`;
-    
-    window.open(`https://wa.me/?text=${encodeURIComponent(compactMessage)}`, '_blank');
-    
-  } else {
-    // Enviar mensagem normal
-    window.open(whatsappUrl, '_blank');
-  }
-  
-  // Backup: copiar para clipboard
-  navigator.clipboard.writeText(message).catch(() => {
-    console.log('Não foi possível copiar para clipboard');
-  });
-};
+  }, [selectedReport]);
 
   const exportToPDF = () => {
     if (!selectedReport) {
@@ -365,17 +416,17 @@ const shareWhatsApp = () => {
     
     sortedPlayers.forEach(player => {
       if (player.totalOwed > 0) {
-        text += `❌ ${player.playerName}: DEVE PAGAR €${player.totalOwed.toFixed(2)}\n`;
+        text += `❌ ${player.playerName}: DEVE PAGAR €${formatCurrency(player.totalOwed)}\n`;
       } else if (player.netBalance > 0) {
-        text += `✅ ${player.playerName}: VAI RECEBER €${player.netBalance.toFixed(2)}\n`;
+        text += `✅ ${player.playerName}: VAI RECEBER €${formatCurrency(player.netBalance)}\n`;
       } else {
         text += `➖ ${player.playerName}: Sem movimentos\n`;
       }
     });
-    
+
     text += `\n━━━━━━━━━━━━━━━━━\n`;
-    text += `💸 Total a cobrar: €${selectedReport.totals.totalToCollect.toFixed(2)}\n`;
-    text += `💵 Total a distribuir: €${selectedReport.totals.totalToPay.toFixed(2)}\n`;
+    text += `💸 Total a cobrar: €${formatCurrency(selectedReport.totals?.totalToCollect)}\n`;
+    text += `💵 Total a distribuir: €${formatCurrency(selectedReport.totals?.totalToPay)}\n`;
     
     navigator.clipboard.writeText(text).then(() => {
       alert('✅ Relatório copiado para a área de transferência!');
@@ -396,6 +447,15 @@ const shareWhatsApp = () => {
           </div>
           
           <div className="flex items-center space-x-3">
+            <button
+              onClick={handleReload}
+              className="flex items-center space-x-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+              disabled={refreshing}
+            >
+              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+              <span>Atualizar</span>
+            </button>
+
             {isAdmin && (
               <button
                 onClick={generateReport}
@@ -420,11 +480,11 @@ const shareWhatsApp = () => {
       </div>
 
       {/* Mensagem de erro */}
-      {error && (
+      {combinedError && (
         <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg">
           <div className="flex items-center">
             <AlertCircle className="h-5 w-5 text-red-500 mr-2" />
-            <p className="text-red-700">{error}</p>
+            <p className="text-red-700">{combinedError}</p>
           </div>
         </div>
       )}
@@ -434,7 +494,7 @@ const shareWhatsApp = () => {
         <div className="bg-white rounded-lg shadow-md p-6">
           <h3 className="text-xl font-semibold mb-4">Relatórios Anteriores</h3>
           
-          {loading ? (
+          {isLoading ? (
             <div className="text-center py-8">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
               <p className="text-gray-600 mt-4">A carregar relatórios...</p>
@@ -449,10 +509,12 @@ const shareWhatsApp = () => {
             </div>
           ) : (
             <div className="space-y-4">
-              {reports.map(report => (
+              {reports.map(report => {
+                const totalToCollect = formatCurrency(report.totals?.totalToCollect ?? 0);
+                return (
                 <div
                   key={report.id}
-                  onClick={() => setSelectedReport(report)}
+                  onClick={() => handleSelectReport(report)}
                   className="p-6 border-2 border-gray-200 rounded-lg hover:border-green-500 hover:bg-green-50 cursor-pointer transition-all"
                 >
                   <div className="flex justify-between items-center">
@@ -472,23 +534,28 @@ const shareWhatsApp = () => {
                     </div>
                     <div className="text-right">
                       <p className="text-2xl font-bold text-red-600">
-                        €{report.totals.totalToCollect.toFixed(2)}
+                        €{totalToCollect}
                       </p>
                       <p className="text-xs text-gray-500">A cobrar</p>
                     </div>
                   </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
         </div>
       ) : (
-        <ReportDetails 
-          report={selectedReport} 
-          onBack={() => setSelectedReport(null)}
+        <ReportDetails
+          report={selectedReport}
+          onBack={() => {
+            setSelectedReport(null);
+            setSelectedReportId(null);
+          }}
           onExport={exportToPDF}
           onShare={shareWhatsApp}
           onCopy={copyToClipboard}
+          loading={loadingSelection}
         />
       )}
     </div>
@@ -496,7 +563,27 @@ const shareWhatsApp = () => {
 };
 
 // Componente para mostrar detalhes do relatório
-const ReportDetails = ({ report, onBack, onExport, onShare, onCopy }) => {
+const ReportDetails = ({ report, onBack, onExport, onShare, onCopy, loading }) => {
+  const totals = report?.totals || {};
+  const summary = Array.isArray(report?.playerSummary) ? report.playerSummary : [];
+  const totalToCollect = formatCurrency(totals.totalToCollect);
+  const totalToPay = formatCurrency(totals.totalToPay);
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg shadow-md p-8 text-center space-y-4">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
+        <p className="text-gray-600">A carregar relatório...</p>
+        <button
+          onClick={onBack}
+          className="inline-flex items-center space-x-2 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
+        >
+          <span>Voltar</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Ações */}
@@ -546,25 +633,19 @@ const ReportDetails = ({ report, onBack, onExport, onShare, onCopy }) => {
         <div className="bg-red-50 rounded-lg p-6 text-center">
           <DollarSign className="h-8 w-8 text-red-600 mx-auto mb-2" />
           <p className="text-sm text-red-600">Total a Cobrar</p>
-          <p className="text-2xl font-bold text-red-800">
-            €{report.totals.totalToCollect.toFixed(2)}
-          </p>
+          <p className="text-2xl font-bold text-red-800">€{totalToCollect}</p>
         </div>
         
         <div className="bg-green-50 rounded-lg p-6 text-center">
           <TrendingUp className="h-8 w-8 text-green-600 mx-auto mb-2" />
           <p className="text-sm text-green-600">Total a Pagar</p>
-          <p className="text-2xl font-bold text-green-800">
-            €{report.totals.totalToPay.toFixed(2)}
-          </p>
+          <p className="text-2xl font-bold text-green-800">€{totalToPay}</p>
         </div>
         
         <div className="bg-blue-50 rounded-lg p-6 text-center">
           <Users className="h-8 w-8 text-blue-600 mx-auto mb-2" />
           <p className="text-sm text-blue-600">Jogadores</p>
-          <p className="text-2xl font-bold text-blue-800">
-            {report.playerSummary.length}
-          </p>
+          <p className="text-2xl font-bold text-blue-800">{summary.length}</p>
         </div>
       </div>
 
@@ -591,49 +672,55 @@ const ReportDetails = ({ report, onBack, onExport, onShare, onCopy }) => {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {report.playerSummary.map(player => (
-              <tr key={player.playerId}>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium text-gray-900">
-                    {player.playerName}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className="text-sm text-gray-500">
-                    {player.roundsPlayed}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className="text-sm text-gray-900">
-                    €{player.totalPaid.toFixed(2)}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`text-sm font-medium ${
-                    player.netBalance < 0 ? 'text-red-600' : 
-                    player.netBalance > 0 ? 'text-green-600' : 
-                    'text-gray-500'
-                  }`}>
-                    €{Math.abs(player.netBalance).toFixed(2)}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  {player.totalOwed > 0 ? (
-                    <span className="px-2 py-1 text-xs font-medium bg-red-100 text-red-800 rounded">
-                      Deve Pagar
+            {summary.map((player) => {
+              const roundsPlayed = player.roundsPlayed || player.totalRounds || 0;
+              const totalPaid = formatCurrency(player.totalPaid);
+              const balanceAmount = formatCurrency(Math.abs(player.netBalance));
+
+              return (
+                <tr key={player.playerId}>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm font-medium text-gray-900">
+                      {player.playerName}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className="text-sm text-gray-500">{roundsPlayed}</span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className="text-sm text-gray-900">€{totalPaid}</span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span
+                      className={`text-sm font-medium ${
+                        player.netBalance < 0
+                          ? 'text-red-600'
+                          : player.netBalance > 0
+                            ? 'text-green-600'
+                            : 'text-gray-500'
+                      }`}
+                    >
+                      €{balanceAmount}
                     </span>
-                  ) : player.netBalance > 0 ? (
-                    <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-800 rounded">
-                      Vai Receber
-                    </span>
-                  ) : (
-                    <span className="px-2 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded">
-                      Equilibrado
-                    </span>
-                  )}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {player.totalOwed > 0 ? (
+                      <span className="px-2 py-1 text-xs font-medium bg-red-100 text-red-800 rounded">
+                        Deve Pagar
+                      </span>
+                    ) : player.netBalance > 0 ? (
+                      <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-800 rounded">
+                        Vai Receber
+                      </span>
+                    ) : (
+                      <span className="px-2 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded">
+                        Equilibrado
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

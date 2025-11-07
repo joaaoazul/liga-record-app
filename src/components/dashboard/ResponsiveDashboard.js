@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import PerfectMobileDashboard from './mobileDashboard';
 import Dashboard from './Dashboard';
+import { LeagueDataProvider } from '../../context/LeagueDataContext';
 
 const ResponsiveDashboard = () => {
   const [screenSize, setScreenSize] = useState('mobile');
@@ -28,19 +29,23 @@ const ResponsiveDashboard = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  if (screenSize === 'tablet') {
-    return (
-      <div className="max-w-3xl mx-auto">
-        <PerfectMobileDashboard />
-      </div>
-    );
-  }
+  const dashboard = useMemo(() => {
+    if (screenSize === 'tablet') {
+      return (
+        <div className="max-w-3xl mx-auto">
+          <PerfectMobileDashboard />
+        </div>
+      );
+    }
 
-  if (screenSize === 'mobile') {
-    return <PerfectMobileDashboard />;
-  }
+    if (screenSize === 'mobile') {
+      return <PerfectMobileDashboard />;
+    }
 
-  return <Dashboard />;
+    return <Dashboard />;
+  }, [screenSize]);
+
+  return <LeagueDataProvider>{dashboard}</LeagueDataProvider>;
 };
 
 export default ResponsiveDashboard;
